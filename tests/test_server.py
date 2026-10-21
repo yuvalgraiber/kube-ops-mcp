@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
 import mcp_types as types
 import pytest
 from mcp.client import Client
@@ -23,6 +24,12 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+@pytest.fixture(autouse=True)
+def fake_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never read the developer's kubeconfig: tests must behave the same in CI."""
+    monkeypatch.setattr(server.k8s, "cluster_name", lambda: "test-cluster")
 
 
 def test_server_identity() -> None:
@@ -101,13 +108,14 @@ async def test_diagnose_reports_progress(monkeypatch: pytest.MonkeyPatch) -> Non
         updates.append((progress, message))
 
     async with Client(server.mcp) as client:
-        await client.call_tool(
+        result = await client.call_tool(
             "diagnose_workload",
             {"namespace": "demo", "deployment": "web"},
             progress_callback=on_progress,
         )
 
     assert updates == [(0, "Reading deployment and pods"), (5, "Done")]
+    assert result.structured_content["cluster"] == "test-cluster"
 
 
 async def test_get_pod_status_lists_unhealthy_pods_first(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121,6 +129,7 @@ async def test_get_pod_status_lists_unhealthy_pods_first(monkeypatch: pytest.Mon
         result = await client.call_tool("get_pod_status", {"namespace": "demo"})
 
     content = result.structured_content
+    assert content["cluster"] == "test-cluster"
     assert [p["name"] for p in content["pods"]] == ["b-pending", "a-healthy"]
     assert content["unhealthy_count"] == 1
 
@@ -292,3 +301,14 @@ async def test_scale_out_of_range_is_refused(write_mode: MagicMock, replicas: in
 
     assert result.is_error
     write_mode.scale_deployment.assert_not_called()
+
+
+async def test_health_endpoint() -> None:
+    app = server.mcp.streamable_http_app()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as http:
+        response = await http.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.text == "ok"

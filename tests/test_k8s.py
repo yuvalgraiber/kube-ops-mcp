@@ -221,7 +221,7 @@ def test_bad_request_includes_the_api_reason(api: MagicMock) -> None:
 
 
 def test_missing_credentials_are_explained(monkeypatch: pytest.MonkeyPatch) -> None:
-    def no_config() -> None:
+    def no_config(**kwargs: object) -> None:
         raise k8s.config.ConfigException("none")
 
     monkeypatch.setattr(k8s.config, "load_incluster_config", no_config)
@@ -274,9 +274,50 @@ def test_cluster_summary(api: MagicMock, monkeypatch: pytest.MonkeyPatch) -> Non
     version = MagicMock()
     version.get_code.return_value.git_version = "v1.37.0"
     monkeypatch.setattr(k8s, "version_api", lambda: version)
+    monkeypatch.setattr(k8s, "cluster_name", lambda: "kind-demo")
 
     assert k8s.cluster_summary(timeout=3) == {
+        "cluster": "kind-demo",
         "kubernetes_version": "v1.37.0",
         "nodes": {"total": 2, "ready": 1},
         "namespaces": ["demo", "kube-system"],
     }
+
+
+def test_pinned_context_is_used_and_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    def not_in_cluster() -> None:
+        raise k8s.config.ConfigException("not in a pod")
+
+    loaded: dict[str, object] = {}
+    monkeypatch.setattr(k8s.config, "load_incluster_config", not_in_cluster)
+    monkeypatch.setattr(k8s.config, "load_kube_config", lambda **kw: loaded.update(kw))
+    monkeypatch.setattr(
+        k8s.config, "list_kube_config_contexts", lambda: ([], {"name": "kind-demo"})
+    )
+    try:
+        k8s.use_context("staging")
+        assert k8s.cluster_name() == "staging"
+        assert loaded == {"context": "staging"}
+
+        k8s.use_context(None)
+        assert k8s.cluster_name() == "kind-demo"
+    finally:
+        k8s.use_context(None)
+
+
+def test_in_cluster_credentials_win(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(k8s.config, "load_incluster_config", lambda: None)
+    try:
+        k8s.use_context("ignored")
+        assert k8s.cluster_name() == "in-cluster"
+    finally:
+        k8s.use_context(None)
+
+
+def test_display_name_overrides_the_detected_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(k8s.config, "load_incluster_config", lambda: None)
+    try:
+        k8s.use_context(None, "prod-eu")
+        assert k8s.cluster_name() == "prod-eu"
+    finally:
+        k8s.use_context(None)

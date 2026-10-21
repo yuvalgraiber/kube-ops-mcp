@@ -51,3 +51,33 @@ def test_write_is_off_and_confirmation_on_by_default() -> None:
 def test_invalid_boolean_is_rejected() -> None:
     with pytest.raises(ValueError, match="KUBE_OPS_ENABLE_WRITE"):
         Settings.from_env({"KUBE_OPS_ENABLE_WRITE": "maybe"})
+
+
+def test_http_transport_settings() -> None:
+    settings = Settings.from_env(
+        {
+            "KUBE_OPS_TRANSPORT": "HTTP",
+            "KUBE_OPS_HOST": "0.0.0.0",  # noqa: S104 - parsing test, nothing binds
+            "KUBE_OPS_PORT": "9000",
+            "KUBE_OPS_ALLOWED_HOSTS": "kube-ops-mcp:*, localhost:*",
+            "KUBE_OPS_CONTEXT": "kind-demo",
+        }
+    )
+
+    assert settings.transport == "http"
+    assert settings.port == 9000
+    assert settings.allowed_hosts == ("kube-ops-mcp:*", "localhost:*")
+    assert settings.kube_context == "kind-demo"
+
+
+def test_stdio_on_localhost_is_the_default() -> None:
+    settings = Settings.from_env({})
+
+    assert settings.transport == "stdio"
+    assert settings.host == "127.0.0.1"
+    assert settings.kube_context is None
+
+
+def test_unknown_transport_is_rejected() -> None:
+    with pytest.raises(ValueError, match="KUBE_OPS_TRANSPORT must be one of stdio, http"):
+        Settings.from_env({"KUBE_OPS_TRANSPORT": "sse"})

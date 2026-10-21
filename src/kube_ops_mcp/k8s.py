@@ -51,19 +51,41 @@ def _validate_name(value: str, kind: str, pattern: re.Pattern[str], max_len: int
     return value
 
 
+_context: str | None = None
+_display_name: str | None = None
+
+
+def use_context(context: str | None, display_name: str | None = None) -> None:
+    """Pin the kubeconfig context (ignored inside a cluster) and the name to report."""
+    global _context, _display_name
+    _context, _display_name = context, display_name
+    for cached in (_load_config, core_v1, apps_v1, version_api):
+        cached.cache_clear()
+
+
+def cluster_name() -> str:
+    """The configured display name, else "in-cluster" or the kubeconfig context name."""
+    return _display_name or _load_config()
+
+
 @cache
-def _load_config() -> None:
+def _load_config() -> str:
     """Load credentials once, preferring the in-cluster service account over kubeconfig."""
     try:
         config.load_incluster_config()
+        return "in-cluster"
     except config.ConfigException:
-        try:
-            config.load_kube_config()
-        except config.ConfigException as exc:
-            raise KubernetesError(
-                "No Kubernetes credentials found: not running in a cluster and no usable "
-                "kubeconfig. Check KUBECONFIG or run `kubectl config current-context`."
-            ) from exc
+        pass
+    try:
+        config.load_kube_config(context=_context)
+        _, active = config.list_kube_config_contexts()
+    except (config.ConfigException, ValueError, OSError) as exc:
+        target = f"context {_context!r}" if _context else "the current context"
+        raise KubernetesError(
+            f"No Kubernetes credentials for {target}: not running in a cluster and no usable "
+            "kubeconfig. Check KUBECONFIG, KUBE_OPS_CONTEXT or `kubectl config get-contexts`."
+        ) from exc
+    return _context or active["name"]
 
 
 @cache
@@ -196,6 +218,7 @@ def cluster_summary(timeout: float) -> dict[str, Any]:
         if cond.type == "Ready" and cond.status == "True"
     )
     return {
+        "cluster": cluster_name(),
         "kubernetes_version": version.git_version,
         "nodes": {"total": len(nodes), "ready": ready_nodes},
         "namespaces": sorted(ns.metadata.name for ns in namespaces),

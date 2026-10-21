@@ -14,13 +14,17 @@ from mcp.server.mcpserver import (
     Resolve,
 )
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp_types import ToolAnnotations
 from pydantic import BaseModel, Field
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
 
 from kube_ops_mcp import diagnose, k8s, prometheus, safety
 from kube_ops_mcp.config import Settings
 
 settings = Settings.from_env()
+k8s.use_context(settings.kube_context, settings.cluster_name)
 
 mcp = MCPServer(
     name="kube-ops",
@@ -70,6 +74,7 @@ def get_pod_status(
         (k8s.summarize_pod(pod) for pod in pods), key=lambda p: (p["healthy"], p["name"])
     )
     result: dict[str, Any] = {
+        "cluster": k8s.cluster_name(),
         "namespace": namespace,
         "pod_count": len(summaries),
         "unhealthy_count": sum(1 for p in summaries if not p["healthy"]),
@@ -219,7 +224,8 @@ async def diagnose_workload(
     try:
         k8s.validate_namespace(namespace)
         k8s.validate_deployment(deployment)
-        return await diagnose.diagnose_workload(settings, namespace, deployment, progress)
+        result = await diagnose.diagnose_workload(settings, namespace, deployment, progress)
+        return {"cluster": k8s.cluster_name(), **result}
     except (ValueError, k8s.KubernetesError) as exc:
         raise ToolError(str(exc)) from exc
 
@@ -396,17 +402,42 @@ Work in this order and say what each step showed before moving on:
 Do not change anything in the cluster unless the user explicitly asks."""
 
 
+@mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
+async def healthz(request: Request) -> PlainTextResponse:
+    """Liveness/readiness probe for the HTTP transport."""
+    return PlainTextResponse("ok")
+
+
 def main() -> None:
-    """Run the server over stdio."""
+    """Run the server over stdio (local client) or Streamable HTTP (in a cluster)."""
     safety.configure_audit_logging()
+    try:
+        cluster = k8s.cluster_name()
+    except k8s.KubernetesError as exc:
+        # Start anyway: every tool call returns this error until credentials work.
+        cluster = f"unavailable: {exc}"
     safety.log_event(
         "startup",
         version=mcp.version,
+        transport=settings.transport,
+        cluster=cluster,
         write_tools=settings.enable_write,
         allowed_namespaces=sorted(settings.allowed_namespaces),
         prometheus_url=safety.redact_text(settings.prometheus_url),
     )
-    mcp.run()
+    if settings.transport == "stdio":
+        mcp.run()
+        return
+    mcp.run(
+        "streamable-http",
+        host=settings.host,
+        port=settings.port,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=list(settings.allowed_hosts),
+            allowed_origins=[f"http://{host}" for host in settings.allowed_hosts],
+        ),
+    )
 
 
 if __name__ == "__main__":

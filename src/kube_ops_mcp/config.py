@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 DEFAULT_PROMETHEUS_URL = "http://localhost:9090"
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_MAX_REPLICAS = 10
+DEFAULT_PORT = 8000
+TRANSPORTS = ("stdio", "http")
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,16 @@ class Settings:
     max_replicas: int = DEFAULT_MAX_REPLICAS
     # Fail closed: refuse writes when the client cannot ask the user to confirm.
     require_confirmation: bool = True
+    # Pin a kubeconfig context so a local run never silently targets the wrong cluster.
+    kube_context: str | None = None
+    # Name to report for the cluster, e.g. "prod-eu". Defaults to the context or "in-cluster".
+    cluster_name: str | None = None
+    # "stdio" for a local client, "http" (Streamable HTTP) when running in a cluster.
+    transport: str = "stdio"
+    host: str = "127.0.0.1"
+    port: int = DEFAULT_PORT
+    # Host headers accepted over HTTP (DNS rebinding protection), e.g. "localhost:*".
+    allowed_hosts: tuple[str, ...] = ("localhost:*", "127.0.0.1:*")
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> "Settings":
@@ -29,11 +41,15 @@ class Settings:
             k8s_timeout_seconds=_positive_float(env, "KUBE_OPS_K8S_TIMEOUT"),
             prometheus_timeout_seconds=_positive_float(env, "KUBE_OPS_PROMETHEUS_TIMEOUT"),
             enable_write=_bool(env, "KUBE_OPS_ENABLE_WRITE", default=False),
-            allowed_namespaces=frozenset(
-                ns.strip() for ns in env.get("ALLOWED_NAMESPACES", "").split(",") if ns.strip()
-            ),
+            allowed_namespaces=frozenset(_csv(env, "ALLOWED_NAMESPACES")),
             max_replicas=_positive_int(env, "KUBE_OPS_MAX_REPLICAS", DEFAULT_MAX_REPLICAS),
             require_confirmation=_bool(env, "KUBE_OPS_REQUIRE_CONFIRMATION", default=True),
+            kube_context=env.get("KUBE_OPS_CONTEXT") or None,
+            cluster_name=env.get("KUBE_OPS_CLUSTER_NAME") or None,
+            transport=_choice(env, "KUBE_OPS_TRANSPORT", TRANSPORTS),
+            host=env.get("KUBE_OPS_HOST", "127.0.0.1"),
+            port=_positive_int(env, "KUBE_OPS_PORT", DEFAULT_PORT),
+            allowed_hosts=_csv(env, "KUBE_OPS_ALLOWED_HOSTS") or ("localhost:*", "127.0.0.1:*"),
         )
 
 
@@ -73,3 +89,14 @@ def _bool(env: Mapping[str, str], name: str, *, default: bool) -> bool:
     if value in ("false", "0", "no"):
         return False
     raise ValueError(f"{name} must be true or false, got {raw!r}")
+
+
+def _choice(env: Mapping[str, str], name: str, choices: tuple[str, ...]) -> str:
+    value = env.get(name, choices[0]).strip().lower()
+    if value not in choices:
+        raise ValueError(f"{name} must be one of {', '.join(choices)}, got {value!r}")
+    return value
+
+
+def _csv(env: Mapping[str, str], name: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in env.get(name, "").split(",") if item.strip())
