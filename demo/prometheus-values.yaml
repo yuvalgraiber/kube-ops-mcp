@@ -1,0 +1,12 @@
+# Minimal kube-prometheus-stack for a laptop: Prometheus + node/kube-state metrics only.
+alertmanager:
+  enabled: false
+grafana:
+  enabled: false
+prometheus:
+  prometheusSpec:
+    retention: 6h
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
