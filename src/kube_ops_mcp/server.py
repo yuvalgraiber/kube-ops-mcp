@@ -1,6 +1,7 @@
 """MCP server entry point: creates the app and registers tools, resources and prompts."""
 
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from typing import Annotated, Any
@@ -23,7 +24,10 @@ from starlette.responses import PlainTextResponse
 from kube_ops_mcp import diagnose, k8s, prometheus, safety
 from kube_ops_mcp.config import Settings
 
-settings = Settings.from_env()
+try:
+    settings = Settings.from_env()
+except ValueError as exc:
+    sys.exit(f"kube-ops-mcp: invalid configuration: {exc}")
 k8s.use_context(settings.kube_context, settings.cluster_name)
 
 mcp = MCPServer(
@@ -156,8 +160,13 @@ def get_pod_logs(
         text = k8s.read_logs(
             namespace, pod, container, tail_lines, previous, settings.k8s_timeout_seconds
         )
-    except (ValueError, k8s.KubernetesError) as exc:
+    except ValueError as exc:
         raise ToolError(str(exc)) from exc
+    except k8s.KubernetesError as exc:
+        hint = (
+            " The previous container may be gone already; try previous=false." if previous else ""
+        )
+        raise ToolError(f"{exc}{hint}") from exc
 
     lines = text.splitlines()
     return {
