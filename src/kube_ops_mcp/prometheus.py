@@ -90,6 +90,11 @@ def _parse(response: httpx.Response, promql: str) -> dict[str, Any]:
     }
     if isinstance(series, list) and len(series) > MAX_SERIES:
         result["truncated"] = f"Showing {MAX_SERIES} of {len(series)} series; narrow the query."
+    if result["series_count"] == 0:
+        result["note"] = (
+            "No series matched. Check label names and values; a container that crashes "
+            "within seconds may never be scraped (default scrape interval is 30s)."
+        )
     if body.get("warnings"):
         result["warnings"] = body["warnings"]
     return result

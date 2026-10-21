@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 from kubernetes.client import (
     ApiException,
+    CoreV1Event,
     V1Container,
     V1ContainerState,
     V1ContainerStateRunning,
@@ -11,6 +12,7 @@ from kubernetes.client import (
     V1ContainerStateWaiting,
     V1ContainerStatus,
     V1ObjectMeta,
+    V1ObjectReference,
     V1Pod,
     V1PodSpec,
     V1PodStatus,
@@ -176,4 +178,44 @@ def test_unreachable_cluster_becomes_actionable_message(api: MagicMock) -> None:
     api.list_namespaced_pod.side_effect = MaxRetryError(MagicMock(), "/api")
 
     with pytest.raises(k8s.KubernetesError, match="kubectl cluster-info"):
+        k8s.list_pods("demo", None, timeout=3)
+
+
+def make_event(reason: str, name: str, seen: datetime) -> CoreV1Event:
+    return CoreV1Event(
+        metadata=V1ObjectMeta(name=f"{name}.1"),
+        involved_object=V1ObjectReference(kind="Pod", name=name),
+        reason=reason,
+        message=f"{reason} happened",
+        last_timestamp=seen,
+        count=2,
+    )
+
+
+def test_recent_events_filters_by_window_and_sorts_newest_first() -> None:
+    old = make_event("BackOff", "web-1", NOW - timedelta(hours=2))
+    newer = make_event("BackOff", "web-2", NOW - timedelta(minutes=1))
+    older = make_event("Unhealthy", "web-3", NOW - timedelta(minutes=30))
+
+    recent = k8s.recent_events([old, older, newer], timedelta(hours=1), NOW)
+
+    assert [e.involved_object.name for e in recent] == ["web-2", "web-3"]
+
+
+def test_summarize_event() -> None:
+    event = make_event("BackOff", "web-1", NOW - timedelta(minutes=3))
+
+    assert k8s.summarize_event(event, NOW) == {
+        "reason": "BackOff",
+        "object": "Pod/web-1",
+        "message": "BackOff happened",
+        "count": 2,
+        "last_seen": "3m",
+    }
+
+
+def test_not_found_becomes_actionable_message(api: MagicMock) -> None:
+    api.list_namespaced_pod.side_effect = ApiException(status=404, reason="Not Found")
+
+    with pytest.raises(k8s.KubernetesError, match="Not found"):
         k8s.list_pods("demo", None, timeout=3)

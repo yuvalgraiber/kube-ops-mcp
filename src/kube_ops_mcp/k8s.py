@@ -1,19 +1,25 @@
-"""Kubernetes API access: client setup, input validation and pod summaries."""
+"""Kubernetes API access: client setup, input validation, reads, guarded writes and summaries."""
 
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from typing import Any
 
 from kubernetes import client, config
-from kubernetes.client import ApiException, V1ContainerStatus, V1Pod
+from kubernetes.client import ApiException, CoreV1Event, V1ContainerStatus, V1Deployment, V1Pod
 from urllib3.exceptions import HTTPError
 
-# RFC 1123 label: what Kubernetes accepts as a namespace name.
+# RFC 1123 label: namespaces, deployments, containers.
 _DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+# RFC 1123 subdomain: pod names.
+_DNS_SUBDOMAIN = re.compile(r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$")
 _MAX_MESSAGE_CHARS = 300
+MAX_LOG_LINES = 500
+_MAX_LOG_BYTES = 64 * 1024
 # A container that terminated this recently is still "flapping", even if it is Running now.
 RECENT_RESTART_WINDOW = timedelta(minutes=15)
+RESTARTED_AT_ANNOTATION = "kubectl.kubernetes.io/restartedAt"
 
 
 class KubernetesError(Exception):
@@ -21,17 +27,33 @@ class KubernetesError(Exception):
 
 
 def validate_namespace(namespace: str) -> str:
-    if len(namespace) > 63 or not _DNS_LABEL.match(namespace):
+    return _validate_name(namespace, "namespace", _DNS_LABEL, 63)
+
+
+def validate_deployment(name: str) -> str:
+    return _validate_name(name, "deployment name", _DNS_LABEL, 63)
+
+
+def validate_container(name: str) -> str:
+    return _validate_name(name, "container name", _DNS_LABEL, 63)
+
+
+def validate_pod(name: str) -> str:
+    return _validate_name(name, "pod name", _DNS_SUBDOMAIN, 253)
+
+
+def _validate_name(value: str, kind: str, pattern: re.Pattern[str], max_len: int) -> str:
+    if len(value) > max_len or not pattern.match(value):
         raise ValueError(
-            f"Invalid namespace {namespace!r}: use lowercase letters, digits and '-', "
-            "at most 63 characters."
+            f"Invalid {kind} {value!r}: use lowercase letters, digits and '-', "
+            f"at most {max_len} characters."
         )
-    return namespace
+    return value
 
 
 @cache
-def core_v1() -> client.CoreV1Api:
-    """Return a CoreV1Api client, preferring in-cluster credentials over kubeconfig."""
+def _load_config() -> None:
+    """Load credentials once, preferring the in-cluster service account over kubeconfig."""
     try:
         config.load_incluster_config()
     except config.ConfigException:
@@ -42,34 +64,167 @@ def core_v1() -> client.CoreV1Api:
                 "No Kubernetes credentials found: not running in a cluster and no usable "
                 "kubeconfig. Check KUBECONFIG or run `kubectl config current-context`."
             ) from exc
+
+
+@cache
+def core_v1() -> client.CoreV1Api:
+    _load_config()
     return client.CoreV1Api()
 
 
-def list_pods(namespace: str, label_selector: str | None, timeout: float) -> list[V1Pod]:
+@cache
+def apps_v1() -> client.AppsV1Api:
+    _load_config()
+    return client.AppsV1Api()
+
+
+@cache
+def version_api() -> client.VersionApi:
+    _load_config()
+    return client.VersionApi()
+
+
+def _call[T](what: str, timeout: float, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+    """Call the Kubernetes API with a timeout and turn failures into actionable messages."""
     try:
-        response = core_v1().list_namespaced_pod(
-            namespace,
-            label_selector=label_selector or "",
-            _request_timeout=timeout,
-        )
+        return fn(*args, _request_timeout=timeout, **kwargs)
     except ApiException as exc:
-        raise KubernetesError(_describe_api_error(exc, f"pods in namespace {namespace!r}")) from exc
+        raise KubernetesError(_describe_api_error(exc, what)) from exc
     except HTTPError as exc:
         raise KubernetesError(
-            f"Could not reach the Kubernetes API within {timeout:g}s. "
+            f"Could not reach the Kubernetes API within {timeout:g}s while {what}. "
             "Is the cluster running? Check with `kubectl cluster-info`."
         ) from exc
-    return response.items
 
 
 def _describe_api_error(exc: ApiException, what: str) -> str:
     if exc.status in (401, 403):
-        return f"Access denied listing {what}: the credentials lack get/list permission (RBAC)."
+        return f"Access denied while {what}: the credentials lack permission (RBAC)."
+    if exc.status == 404:
+        return f"Not found while {what}. Check the names with get_pod_status."
     if exc.status == 400:
-        return (
-            f"Kubernetes rejected the request for {what}: {exc.reason}. Check the label selector."
-        )
-    return f"Kubernetes API error {exc.status} ({exc.reason}) while listing {what}."
+        reason = (exc.body or exc.reason or "bad request").strip()[:_MAX_MESSAGE_CHARS]
+        return f"Kubernetes rejected the request while {what}: {reason}"
+    return f"Kubernetes API error {exc.status} ({exc.reason}) while {what}."
+
+
+# --- Reads -------------------------------------------------------------------------------
+
+
+def list_pods(namespace: str, label_selector: str | None, timeout: float) -> list[V1Pod]:
+    response = _call(
+        f"listing pods in namespace {namespace!r}",
+        timeout,
+        core_v1().list_namespaced_pod,
+        namespace,
+        label_selector=label_selector or "",
+    )
+    return response.items
+
+
+def list_warning_events(namespace: str, timeout: float) -> list[CoreV1Event]:
+    response = _call(
+        f"listing events in namespace {namespace!r}",
+        timeout,
+        core_v1().list_namespaced_event,
+        namespace,
+        field_selector="type=Warning",
+    )
+    return response.items
+
+
+def read_logs(
+    namespace: str, pod: str, container: str | None, tail_lines: int, previous: bool, timeout: float
+) -> str:
+    kwargs: dict[str, Any] = {"tail_lines": tail_lines, "limit_bytes": _MAX_LOG_BYTES}
+    if container:
+        kwargs["container"] = container
+    if previous:
+        kwargs["previous"] = True
+    which = "previous " if previous else ""
+    return _call(
+        f"reading {which}logs of pod {namespace}/{pod}",
+        timeout,
+        core_v1().read_namespaced_pod_log,
+        pod,
+        namespace,
+        **kwargs,
+    )
+
+
+def get_deployment(namespace: str, name: str, timeout: float) -> V1Deployment:
+    return _call(
+        f"reading deployment {namespace}/{name}",
+        timeout,
+        apps_v1().read_namespaced_deployment,
+        name,
+        namespace,
+    )
+
+
+def deployment_selector(deployment: V1Deployment) -> str:
+    labels = (deployment.spec.selector.match_labels or {}) if deployment.spec.selector else {}
+    return ",".join(f"{k}={v}" for k, v in sorted(labels.items()))
+
+
+def cluster_summary(timeout: float) -> dict[str, Any]:
+    nodes = _call("listing nodes", timeout, core_v1().list_node).items
+    namespaces = _call("listing namespaces", timeout, core_v1().list_namespace).items
+    version = _call("reading the server version", timeout, version_api().get_code)
+    ready_nodes = sum(
+        1
+        for node in nodes
+        for cond in node.status.conditions or []
+        if cond.type == "Ready" and cond.status == "True"
+    )
+    return {
+        "kubernetes_version": version.git_version,
+        "nodes": {"total": len(nodes), "ready": ready_nodes},
+        "namespaces": sorted(ns.metadata.name for ns in namespaces),
+    }
+
+
+# --- Writes (callers must enforce the write policy first) -------------------------------
+
+
+def restart_deployment(namespace: str, name: str, timeout: float, now: datetime) -> None:
+    """Trigger a rolling restart, exactly like `kubectl rollout restart`."""
+    body = {
+        "spec": {
+            "template": {"metadata": {"annotations": {RESTARTED_AT_ANNOTATION: now.isoformat()}}}
+        }
+    }
+    _call(
+        f"restarting deployment {namespace}/{name}",
+        timeout,
+        apps_v1().patch_namespaced_deployment,
+        name,
+        namespace,
+        body,
+    )
+
+
+def scale_deployment(namespace: str, name: str, replicas: int, timeout: float) -> int:
+    """Set the replica count and return the previous one."""
+    scale = _call(
+        f"reading scale of deployment {namespace}/{name}",
+        timeout,
+        apps_v1().read_namespaced_deployment_scale,
+        name,
+        namespace,
+    )
+    _call(
+        f"scaling deployment {namespace}/{name}",
+        timeout,
+        apps_v1().patch_namespaced_deployment_scale,
+        name,
+        namespace,
+        {"spec": {"replicas": replicas}},
+    )
+    return scale.spec.replicas
+
+
+# --- Summaries ---------------------------------------------------------------------------
 
 
 def summarize_pod(pod: V1Pod, now: datetime | None = None) -> dict[str, Any]:
@@ -162,3 +317,29 @@ def _age(created: datetime | None, now: datetime) -> str | None:
         if seconds >= size:
             return f"{seconds // size}{unit}"
     return f"{seconds}s"
+
+
+def summarize_event(event: CoreV1Event, now: datetime) -> dict[str, Any]:
+    obj = event.involved_object
+    return {
+        "reason": event.reason,
+        "object": f"{obj.kind}/{obj.name}",
+        "message": (event.message or "").strip()[:_MAX_MESSAGE_CHARS],
+        "count": event.count or 1,
+        "last_seen": _age(_event_time(event), now),
+    }
+
+
+def recent_events(events: list[CoreV1Event], window: timedelta, now: datetime) -> list[CoreV1Event]:
+    """Keep events seen within `window`, newest first."""
+    recent = [e for e in events if (t := _event_time(e)) is not None and now - t <= window]
+    return sorted(recent, key=_event_time, reverse=True)
+
+
+def _event_time(event: CoreV1Event) -> datetime | None:
+    return (
+        event.last_timestamp
+        or event.event_time
+        or event.first_timestamp
+        or (event.metadata.creation_timestamp if event.metadata else None)
+    )
