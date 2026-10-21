@@ -9,7 +9,7 @@ CHART := deploy/helm/kube-ops-mcp
 RELEASE := kube-ops-mcp
 RELEASE_NS := kube-ops
 
-.PHONY: help install lint fmt test check run inspector demo-up demo-down port-forward \
+.PHONY: help install lint typecheck fmt test check run inspector demo-up demo-down port-forward \
 	image helm-lint deploy undeploy port-forward-mcp demo-gif
 
 help: ## Show this help
@@ -22,6 +22,9 @@ lint: ## Check code style and security rules
 	uv run ruff check .
 	uv run ruff format --check .
 
+typecheck: ## Static type check with mypy
+	uv run mypy
+
 helm-lint: ## Lint the Helm chart in read-only and write mode
 	helm lint $(CHART) --strict
 	helm lint $(CHART) --strict --set write.enabled=true --set 'write.allowedNamespaces={demo}'
@@ -33,7 +36,7 @@ fmt: ## Auto-format the code
 test: ## Run unit tests (no cluster needed)
 	uv run pytest
 
-check: lint helm-lint test ## Run everything CI runs
+check: lint typecheck helm-lint test ## Run everything CI runs
 
 run: ## Run the MCP server over stdio
 	uv run kube-ops-mcp
