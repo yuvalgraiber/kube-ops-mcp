@@ -12,3 +12,7 @@ build/
 # Local AI assistant files
 CLAUDE.md
 .claude/settings.local.json
+
+# Test artifacts
+.coverage
+htmlcov/
