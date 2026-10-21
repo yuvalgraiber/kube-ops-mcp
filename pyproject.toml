@@ -1,0 +1,49 @@
+[project]
+name = "kube-ops-mcp"
+version = "0.1.0"
+description = "MCP server that lets AI assistants triage Kubernetes incidents, read-only by default"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["mcp", "kubernetes", "prometheus", "claude", "incident-response"]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: System :: Monitoring",
+]
+authors = [
+    { name = "Yuval Graiber", email = "247344001+yuvalgraiber@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "kubernetes>=37.0.1",
+    "mcp[cli]>=2.3.0",
+]
+
+[project.scripts]
+kube-ops-mcp = "kube_ops_mcp.server:main"
+
+[build-system]
+requires = ["uv_build>=0.13.4,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, pyupgrade, bugbear, simplify, bandit (security)
+select = ["E", "F", "I", "UP", "B", "SIM", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # assert is how pytest works
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
