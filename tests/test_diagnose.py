@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 from kubernetes.client import (
+    V1ContainerState,
     V1ContainerStateTerminated,
     V1Deployment,
     V1DeploymentCondition,
@@ -267,3 +268,57 @@ async def test_diagnose_reports_unreadable_logs(
 
     assert result["logs"] == {}
     assert result["unavailable"] == ["logs web-7d9f8-abcde/app: Access denied (RBAC)"]
+
+
+@pytest.mark.anyio
+async def test_falls_back_to_current_logs_when_previous_are_gone(
+    cluster: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def read_logs(ns: str, pod: str, container: str, lines: int, previous: bool, t: float) -> str:
+        if previous:
+            raise k8s.KubernetesError("unable to retrieve container logs")
+        return "FATAL: DATABASE_URL is not set"
+
+    async def progress(step: float, message: str) -> None:
+        pass
+
+    monkeypatch.setattr(k8s, "read_logs", read_logs)
+    monkeypatch.setattr(prometheus, "query", fake_prometheus({}))
+
+    result = await diagnose.diagnose_workload(Settings(), "demo", "web", progress)
+
+    assert result["logs"] == {"web-7d9f8-abcde/app": ["FATAL: DATABASE_URL is not set"]}
+    assert "unavailable" not in result
+
+
+@pytest.mark.anyio
+async def test_terminated_container_reads_its_own_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime.now(UTC)
+    exited = V1ContainerStateTerminated(reason="Error", exit_code=1, finished_at=now)
+    pod_obj = make_pod(
+        "web-7d9f8-abcde",
+        "Running",
+        [
+            container(
+                ready=False, restarts=3, state=V1ContainerState(terminated=exited), last=exited
+            )
+        ],
+    )
+    asked: list[bool] = []
+
+    def read_logs(ns: str, pod: str, c: str, lines: int, previous: bool, t: float) -> str:
+        asked.append(previous)
+        return "boom"
+
+    async def progress(step: float, message: str) -> None:
+        pass
+
+    monkeypatch.setattr(k8s, "get_deployment", lambda *a: make_deployment("web"))
+    monkeypatch.setattr(k8s, "list_pods", lambda *a: [pod_obj])
+    monkeypatch.setattr(k8s, "list_warning_events", lambda *a: [])
+    monkeypatch.setattr(k8s, "read_logs", read_logs)
+    monkeypatch.setattr(prometheus, "query", fake_prometheus({}))
+
+    await diagnose.diagnose_workload(Settings(), "demo", "web", progress)
+
+    assert asked == [False]

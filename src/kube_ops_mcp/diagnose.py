@@ -65,15 +65,7 @@ async def diagnose_workload(
                 continue
             key = f"{pod['name']}/{container['name']}"
             try:
-                text = await _thread(
-                    k8s.read_logs,
-                    namespace,
-                    pod["name"],
-                    container["name"],
-                    LOG_TAIL_LINES,
-                    crashed,
-                    timeout,
-                )
+                text = await _crash_logs(namespace, pod["name"], container, timeout)
             except k8s.KubernetesError as exc:
                 unavailable.append(f"logs {key}: {exc}")
                 continue
@@ -104,6 +96,22 @@ async def diagnose_workload(
     if unavailable:
         result["unavailable"] = unavailable
     return result
+
+
+async def _crash_logs(namespace: str, pod: str, container: dict[str, Any], timeout: float) -> str:
+    """Logs of the run that crashed.
+
+    A container that is terminated right now still holds its own crash logs. One that has
+    already restarted needs the previous instance, which the kubelet may have cleaned up,
+    so fall back to the current logs.
+    """
+    name = container["name"]
+    if container["state"] == "terminated" or "last_termination" not in container:
+        return await _thread(k8s.read_logs, namespace, pod, name, LOG_TAIL_LINES, False, timeout)
+    try:
+        return await _thread(k8s.read_logs, namespace, pod, name, LOG_TAIL_LINES, True, timeout)
+    except k8s.KubernetesError:
+        return await _thread(k8s.read_logs, namespace, pod, name, LOG_TAIL_LINES, False, timeout)
 
 
 async def _thread(fn: Callable[..., Any], *args: Any) -> Any:
