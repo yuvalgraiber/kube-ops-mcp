@@ -2,6 +2,18 @@
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org/).
 
+## [0.1.1] - 2026-10-21
+
+### Added
+
+- Signed build provenance for the container image, now that the repository is public.
+- A README for the Helm chart, shown by `helm show readme`, with the values reference.
+- README sections for every setup: the demo, your own cluster without cloning (`uvx` from a release tag), a team install from the published chart, other MCP clients, enabling writes and troubleshooting.
+
+### Changed
+
+- CI uses astral-sh/setup-uv 10.3.0.
+
 ## [0.1.0] - 2026-10-21
 
 First release.
@@ -18,4 +30,5 @@ First release.
 - Helm chart (`oci://ghcr.io/yuvalgraiber/charts/kube-ops-mcp`) with read-only RBAC, a hardened pod spec, a NetworkPolicy and a `helm test` hook.
 - kind demo environment with two deliberately broken apps.
 
+[0.1.1]: https://github.com/yuvalgraiber/kube-ops-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/yuvalgraiber/kube-ops-mcp/releases/tag/v0.1.0

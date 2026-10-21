@@ -64,7 +64,7 @@ You don't need to clone anything. Add the server to Claude Code once, and it's a
 claude mcp add kube-ops --scope user \
   -e KUBE_OPS_CONTEXT=my-cluster-context \
   -e PROMETHEUS_URL=http://localhost:9090 \
-  -- uvx --from git+https://github.com/yuvalgraiber/kube-ops-mcp@v0.1.0 kube-ops-mcp
+  -- uvx --from git+https://github.com/yuvalgraiber/kube-ops-mcp@v0.1.1 kube-ops-mcp
 ```
 
 - `KUBE_OPS_CONTEXT` is the kubeconfig context to use (`kubectl config get-contexts`). Pinning it means the server can't wander off to another cluster when you switch contexts in your terminal. Leave it out to use your current context.
@@ -78,7 +78,7 @@ Then open Claude Code anywhere and ask about your cluster. `claude mcp remove ku
 For a team, run the server once inside the cluster with its own read-only ServiceAccount, instead of everyone using their own credentials.
 
 ```bash
-helm install kube-ops-mcp oci://ghcr.io/yuvalgraiber/charts/kube-ops-mcp --version 0.1.0 \
+helm install kube-ops-mcp oci://ghcr.io/yuvalgraiber/charts/kube-ops-mcp --version 0.1.1 \
   -n kube-ops --create-namespace \
   --set clusterName=prod-eu \
   --set prometheus.url=http://prometheus-operated.monitoring.svc:9090
@@ -106,7 +106,7 @@ Any client that can start a stdio MCP server works. For Claude Desktop, Cursor o
   "mcpServers": {
     "kube-ops": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/yuvalgraiber/kube-ops-mcp@v0.1.0", "kube-ops-mcp"],
+      "args": ["--from", "git+https://github.com/yuvalgraiber/kube-ops-mcp@v0.1.1", "kube-ops-mcp"],
       "env": {
         "KUBE_OPS_CONTEXT": "my-cluster-context",
         "PROMETHEUS_URL": "http://localhost:9090"
@@ -149,10 +149,10 @@ There's also a `cluster://summary` resource with the Kubernetes version, node re
 # local
 claude mcp add kube-ops --scope user \
   -e KUBE_OPS_ENABLE_WRITE=true -e ALLOWED_NAMESPACES=staging,dev \
-  -- uvx --from git+https://github.com/yuvalgraiber/kube-ops-mcp@v0.1.0 kube-ops-mcp
+  -- uvx --from git+https://github.com/yuvalgraiber/kube-ops-mcp@v0.1.1 kube-ops-mcp
 
 # in a cluster (also creates a Role that can only patch deployments, in those namespaces only)
-helm upgrade kube-ops-mcp oci://ghcr.io/yuvalgraiber/charts/kube-ops-mcp --version 0.1.0 -n kube-ops \
+helm upgrade kube-ops-mcp oci://ghcr.io/yuvalgraiber/charts/kube-ops-mcp --version 0.1.1 -n kube-ops \
   --reuse-values --set write.enabled=true --set 'write.allowedNamespaces={staging,dev}'
 ```
 
