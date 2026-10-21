@@ -9,8 +9,7 @@ build/
 *.egg-info/
 .DS_Store
 
-# Local AI assistant files
-CLAUDE.md
+# Local Claude Code settings
 .claude/settings.local.json
 
 # Test artifacts
