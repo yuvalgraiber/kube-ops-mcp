@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "kube-ops": {
+      "command": "uv",
+      "args": ["run", "--quiet", "kube-ops-mcp"],
+      "env": {
+        "PROMETHEUS_URL": "${PROMETHEUS_URL:-http://localhost:9090}"
+      }
+    }
+  }
+}
