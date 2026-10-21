@@ -19,7 +19,7 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
     "kubernetes>=37.0.1",
-    "mcp[cli]>=2.3.0,<3",  # 2.x renamed core APIs; review majors deliberately
+    "mcp>=2.3.0,<3",  # 2.x renamed core APIs; review majors deliberately
 ]
 
 [project.urls]

@@ -1,0 +1,8 @@
+# Only the package source, metadata and lock file go into the build context.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src/
+**/__pycache__
