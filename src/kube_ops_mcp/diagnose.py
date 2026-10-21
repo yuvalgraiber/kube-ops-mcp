@@ -19,6 +19,10 @@ from kube_ops_mcp.config import Settings
 EVENT_WINDOW = timedelta(hours=1)
 MAX_EVENTS = 20
 MAX_PODS_WITH_LOGS = 3
+# A Deployment can have hundreds of replicas; show enough to reason about, not all of them.
+MAX_PODS_SHOWN = 15
+MAX_UNHEALTHY_SHOWN = 10
+MAX_AFFECTED_SHOWN = 10
 LOG_TAIL_LINES = 30
 STEPS = 5
 
@@ -52,7 +56,7 @@ async def diagnose_workload(
     event_summaries = [
         k8s.summarize_event(e, now)
         for e in k8s.recent_events(events, EVENT_WINDOW, now)
-        if e.involved_object.name in names
+        if (e.involved_object.name or "") in names
     ][:MAX_EVENTS]
 
     await progress(2, "Reading logs of unhealthy pods")
@@ -83,16 +87,25 @@ async def diagnose_workload(
     findings = analyze(status, pod_summaries, event_summaries, logs, usage)
     await progress(STEPS, "Done")
 
+    shown, omitted = k8s.limit_pods(
+        pod_summaries, max_pods=MAX_PODS_SHOWN, max_unhealthy=MAX_UNHEALTHY_SHOWN
+    )
+    shown_names = {p["name"] for p in shown}
     result: dict[str, Any] = {
         "namespace": namespace,
         "deployment": deployment,
         "findings": findings,
         "deployment_status": status,
-        "pods": pod_summaries,
+        "pod_count": len(pod_summaries),
+        "pods": shown,
         "warning_events": event_summaries,
         "logs": logs,
-        "resource_usage": usage,
+        "resource_usage": {
+            key: value for key, value in usage.items() if key.split("/")[0] in shown_names
+        },
     }
+    if omitted:
+        result["pods_note"] = f"Showing {len(shown)} of {len(pod_summaries)} pods, unhealthy first."
     if unavailable:
         result["unavailable"] = unavailable
     return result
@@ -223,6 +236,11 @@ def analyze(
         return [
             {"severity": "info", "summary": "No problems found.", "affected": [], "evidence": []}
         ]
+    for finding in merged.values():
+        affected = finding["affected"]
+        if len(affected) > MAX_AFFECTED_SHOWN:
+            extra = len(affected) - MAX_AFFECTED_SHOWN
+            finding["affected"] = [*affected[:MAX_AFFECTED_SHOWN], f"and {extra} more"]
     return sorted(merged.values(), key=lambda f: _SEVERITY_ORDER[f["severity"]])
 
 

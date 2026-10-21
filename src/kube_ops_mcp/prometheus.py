@@ -82,13 +82,15 @@ def _parse(response: httpx.Response, promql: str) -> dict[str, Any]:
 
     data = body["data"]
     series = data["result"]
+    # vector and matrix results are lists of series; scalar and string are one [time, value].
+    is_series = data["resultType"] in ("vector", "matrix")
     result: dict[str, Any] = {
         "query": promql,
         "result_type": data["resultType"],
-        "series_count": len(series) if isinstance(series, list) else 1,
-        "result": series[:MAX_SERIES] if isinstance(series, list) else series,
+        "series_count": len(series) if is_series else 1,
+        "result": series[:MAX_SERIES] if is_series else series,
     }
-    if isinstance(series, list) and len(series) > MAX_SERIES:
+    if is_series and len(series) > MAX_SERIES:
         result["truncated"] = f"Showing {MAX_SERIES} of {len(series)} series; narrow the query."
     if result["series_count"] == 0:
         result["note"] = (

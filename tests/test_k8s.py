@@ -321,3 +321,37 @@ def test_display_name_overrides_the_detected_cluster(monkeypatch: pytest.MonkeyP
         assert k8s.cluster_name() == "prod-eu"
     finally:
         k8s.use_context(None)
+
+
+def test_limit_pods_puts_unhealthy_first_and_shortens_healthy() -> None:
+    summaries = [
+        {
+            "name": "bad",
+            "healthy": False,
+            "status": "Error",
+            "ready": "0/1",
+            "restarts": 3,
+            "age": "1h",
+            "node": "n",
+            "containers": [],
+        },
+        *[
+            {
+                "name": f"ok-{i}",
+                "healthy": True,
+                "status": "Running",
+                "ready": "1/1",
+                "restarts": 0,
+                "age": "1h",
+                "node": "n",
+                "containers": [],
+            }
+            for i in range(10)
+        ],
+    ]
+
+    shown, omitted = k8s.limit_pods(summaries, max_pods=4, max_unhealthy=2)
+
+    assert [p["name"] for p in shown] == ["bad", "ok-0", "ok-1", "ok-2"]
+    assert "containers" in shown[0] and "containers" not in shown[1]
+    assert omitted == 7

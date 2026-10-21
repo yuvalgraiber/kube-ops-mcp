@@ -41,6 +41,10 @@ mcp = MCPServer(
     middleware=[safety.SafetyMiddleware()],
 )
 
+# Keep get_pod_status readable on namespaces with hundreds of pods.
+MAX_PODS = 60
+MAX_UNHEALTHY = 25
+
 Namespace = Annotated[str, Field(description="Kubernetes namespace, e.g. 'demo'.")]
 DeploymentName = Annotated[str, Field(description="Deployment name, e.g. 'payment-service'.")]
 
@@ -77,15 +81,21 @@ def get_pod_status(
     summaries = sorted(
         (k8s.summarize_pod(pod) for pod in pods), key=lambda p: (p["healthy"], p["name"])
     )
+    shown, omitted = k8s.limit_pods(summaries, max_pods=MAX_PODS, max_unhealthy=MAX_UNHEALTHY)
     result: dict[str, Any] = {
         "cluster": k8s.cluster_name(),
         "namespace": namespace,
         "pod_count": len(summaries),
         "unhealthy_count": sum(1 for p in summaries if not p["healthy"]),
-        "pods": summaries,
+        "pods": shown,
     }
     if not summaries:
         result["note"] = "No pods found. Check the namespace name and label selector."
+    elif omitted:
+        result["note"] = (
+            f"Showing {len(shown)} of {len(summaries)} pods, unhealthy first; healthy pods are "
+            "shortened. Use label_selector to look at one workload."
+        )
     return result
 
 
@@ -119,7 +129,7 @@ def get_recent_events(
     now = datetime.now(UTC)
     recent = k8s.recent_events(events, timedelta(minutes=minutes), now)
     if object_name:
-        recent = [e for e in recent if e.involved_object.name.startswith(object_name)]
+        recent = [e for e in recent if (e.involved_object.name or "").startswith(object_name)]
     summaries = [k8s.summarize_event(e, now) for e in recent]
     return {
         "namespace": namespace,

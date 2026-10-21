@@ -12,6 +12,11 @@ from unittest.mock import MagicMock
 import httpx
 import mcp_types as types
 import pytest
+from kubernetes.client import (
+    V1ContainerState,
+    V1ContainerStateTerminated,
+    V1ContainerStateWaiting,
+)
 from mcp.client import Client
 
 from kube_ops_mcp import server
@@ -194,6 +199,49 @@ async def test_incident_triage_prompt_names_the_workload() -> None:
     text = result.messages[0].content.text
     assert 'diagnose_workload(namespace="demo", deployment="payment-service")' in text
     assert "Do not change anything" in text
+
+
+async def test_big_namespace_keeps_unhealthy_pods_and_fits_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC)
+    crash = V1ContainerStateTerminated(reason="Error", exit_code=1, finished_at=now)
+    waiting = V1ContainerState(waiting=V1ContainerStateWaiting(reason="CrashLoopBackOff"))
+    healthy = [
+        make_pod(f"web-7d9f8-{i:05d}", "Running", [container(ready=True, state=RUNNING)])
+        for i in range(300)
+    ]
+    broken = [
+        make_pod(
+            f"api-5c6d7-{i:05d}", "Running", [container(ready=False, state=waiting, last=crash)]
+        )
+        for i in range(3)
+    ]
+    monkeypatch.setattr(server.k8s, "list_pods", lambda *a: healthy + broken)
+
+    async with Client(server.mcp) as client:
+        result = await client.call_tool("get_pod_status", {"namespace": "big"})
+
+    content = result.structured_content
+    assert content["pod_count"] == 303
+    assert [p["name"] for p in content["pods"][:3]] == [p.metadata.name for p in broken]
+    assert content["pods"][0]["containers"][0]["last_termination"]["exit_code"] == 1
+    assert "containers" not in content["pods"][-1]  # healthy pods are shortened
+    assert "Showing" in content["note"]
+
+
+async def test_events_without_an_object_name_are_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    event = make_event("Rebooted", "node-1", datetime.now(UTC) - timedelta(minutes=1))
+    event.involved_object.name = None
+    monkeypatch.setattr(server.k8s, "list_warning_events", lambda *a: [event])
+
+    async with Client(server.mcp) as client:
+        result = await client.call_tool(
+            "get_recent_events", {"namespace": "demo", "object_name": "web"}
+        )
+
+    assert not result.is_error
+    assert result.structured_content["events"] == []
 
 
 # --- Write tools ---------------------------------------------------------------------------

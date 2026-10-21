@@ -322,3 +322,13 @@ async def test_terminated_container_reads_its_own_logs(monkeypatch: pytest.Monke
     await diagnose.diagnose_workload(Settings(), "demo", "web", progress)
 
     assert asked == [False]
+
+
+def test_affected_list_is_capped_for_big_deployments() -> None:
+    oom = {"last_termination": {"reason": "OOMKilled", "exit_code": 137}}
+    pods = [pod(f"api-{i}", **oom) for i in range(25)]
+
+    [finding] = diagnose.analyze(HEALTHY_STATUS, pods, [], {}, {})
+
+    assert len(finding["affected"]) == diagnose.MAX_AFFECTED_SHOWN + 1
+    assert finding["affected"][-1] == "and 15 more"

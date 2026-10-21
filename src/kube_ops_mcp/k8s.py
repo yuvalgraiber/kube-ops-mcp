@@ -360,6 +360,25 @@ def _age(created: datetime | None, now: datetime) -> str | None:
     return f"{seconds}s"
 
 
+def limit_pods(
+    summaries: list[dict[str, Any]], max_pods: int, max_unhealthy: int
+) -> tuple[list[dict[str, Any]], int]:
+    """Keep the output small on big namespaces without hiding what matters.
+
+    Unhealthy pods come first with full detail; healthy ones are shortened to one line.
+    Returns the pods to show and how many were left out.
+    """
+    unhealthy = [p for p in summaries if not p["healthy"]][:max_unhealthy]
+    room = max(0, max_pods - len(unhealthy))
+    healthy = [
+        {key: p[key] for key in ("name", "status", "ready", "restarts", "age")}
+        for p in summaries
+        if p["healthy"]
+    ][:room]
+    shown = unhealthy + healthy
+    return shown, len(summaries) - len(shown)
+
+
 def summarize_event(event: CoreV1Event, now: datetime) -> dict[str, Any]:
     obj = event.involved_object
     return {

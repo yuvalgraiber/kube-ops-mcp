@@ -105,3 +105,15 @@ async def test_timeout_is_reported() -> None:
 def test_invalid_input_is_rejected(promql: str, range_minutes: int | None, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         prometheus.validate_query(promql, range_minutes)
+
+
+async def test_scalar_result_counts_as_one_value() -> None:
+    body = {"status": "success", "data": {"resultType": "scalar", "result": [1, "42"]}}
+
+    result = await prometheus.query(
+        URL, "scalar(up)", timeout=5, transport=transport_returning(200, body, [])
+    )
+
+    assert result["series_count"] == 1
+    assert result["result"] == [1, "42"]
+    assert "note" not in result
