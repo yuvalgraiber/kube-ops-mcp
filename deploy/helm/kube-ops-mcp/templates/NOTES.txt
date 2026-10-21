@@ -1,0 +1,11 @@
+kube-ops-mcp {{ .Chart.AppVersion }} is running in namespace {{ .Release.Namespace }}.
+Write tools: {{ if .Values.write.enabled }}ENABLED for {{ join ", " .Values.write.allowedNamespaces }}{{ else }}disabled (read-only){{ end }}
+
+Connect Claude Code through a port-forward:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "kube-ops-mcp.fullname" . }} 8000:{{ .Values.service.port }}
+  claude mcp add --transport http kube-ops-cluster http://localhost:8000/mcp
+
+Check the deployment:
+
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}

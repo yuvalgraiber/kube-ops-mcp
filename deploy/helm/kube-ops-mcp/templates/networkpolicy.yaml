@@ -1,0 +1,22 @@
+{{- if .Values.networkPolicy.enabled }}
+# Ingress only from labelled client pods. The MCP endpoint has no login of its own.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kube-ops-mcp.fullname" . }}
+  labels:
+    {{- include "kube-ops-mcp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "kube-ops-mcp.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.clientPodLabels | nindent 14 }}
+      ports:
+        - port: http
+{{- end }}

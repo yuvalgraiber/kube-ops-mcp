@@ -1,0 +1,65 @@
+# Read-only access for triage: get/list only, and never secrets or configmaps.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kube-ops-mcp.fullname" . }}-read
+  labels:
+    {{- include "kube-ops-mcp.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, events, namespaces, nodes]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kube-ops-mcp.fullname" . }}-read
+  labels:
+    {{- include "kube-ops-mcp.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kube-ops-mcp.fullname" . }}-read
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kube-ops-mcp.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.write.enabled }}
+{{- if empty .Values.write.allowedNamespaces }}
+{{- fail "write.enabled=true needs at least one entry in write.allowedNamespaces" }}
+{{- end }}
+{{- range .Values.write.allowedNamespaces }}
+---
+# Write access only inside {{ . }}: restart (patch) and scale deployments.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kube-ops-mcp.fullname" $ }}-write
+  namespace: {{ . }}
+  labels:
+    {{- include "kube-ops-mcp.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments, deployments/scale]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kube-ops-mcp.fullname" $ }}-write
+  namespace: {{ . }}
+  labels:
+    {{- include "kube-ops-mcp.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kube-ops-mcp.fullname" $ }}-write
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kube-ops-mcp.fullname" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

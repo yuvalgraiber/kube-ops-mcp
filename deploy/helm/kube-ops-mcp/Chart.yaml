@@ -1,0 +1,14 @@
+apiVersion: v2
+name: kube-ops-mcp
+description: MCP server that lets AI assistants triage Kubernetes incidents, read-only by default
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.28.0-0"
+home: https://github.com/yuvalgraiber/kube-ops-mcp
+sources:
+  - https://github.com/yuvalgraiber/kube-ops-mcp
+keywords: [mcp, kubernetes, incident-response, prometheus]
+maintainers:
+  - name: Yuval Graiber
+    url: https://github.com/yuvalgraiber

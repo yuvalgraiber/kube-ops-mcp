@@ -1,0 +1,27 @@
+# `helm test` checks that the server answers its health endpoint through the service.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "kube-ops-mcp.fullname" . }}-test
+  labels:
+    {{- include "kube-ops-mcp.labels" . | nindent 4 }}
+    {{- toYaml .Values.networkPolicy.clientPodLabels | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: wget
+      image: busybox:1.36
+      command: [wget, -qO-, "http://{{ include "kube-ops-mcp.fullname" . }}:{{ .Values.service.port }}/healthz"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]

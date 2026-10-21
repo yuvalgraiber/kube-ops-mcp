@@ -1,0 +1,62 @@
+# Default values for kube-ops-mcp. Secure by default: read-only, non-root, ClusterIP only.
+
+image:
+  repository: ghcr.io/yuvalgraiber/kube-ops-mcp
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Name the server reports for this cluster, e.g. "prod-eu". Empty means "in-cluster".
+clusterName: ""
+
+# Prometheus HTTP API. `prometheus-operated` is the service the Prometheus Operator creates.
+prometheus:
+  url: http://prometheus-operated.monitoring.svc:9090
+
+timeoutSeconds:
+  kubernetes: 10
+  prometheus: 10
+
+# Write tools (restart_deployment, scale_deployment). When enabled, a namespaced Role is
+# created only in each allowed namespace, and every write still needs user confirmation.
+write:
+  enabled: false
+  allowedNamespaces: []
+  maxReplicas: 10
+  requireConfirmation: true
+
+# Extra Host headers to accept, e.g. an internal DNS name. The service names and
+# localhost (for kubectl port-forward) are always allowed.
+extraAllowedHosts: []
+
+service:
+  type: ClusterIP
+  port: 8000
+
+# Only pods carrying these labels (in any namespace) may connect. kubectl port-forward
+# keeps working, and it already requires RBAC permission on pods/portforward.
+networkPolicy:
+  enabled: true
+  clientPodLabels:
+    kube-ops-mcp-client: "true"
+
+serviceAccount:
+  annotations: {}
+
+podAnnotations: {}
+
+# No CPU limit on purpose: it only causes throttling. Memory is limited.
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

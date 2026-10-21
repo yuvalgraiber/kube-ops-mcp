@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kube-ops-mcp.fullname" . }}
+  labels:
+    {{- include "kube-ops-mcp.labels" . | nindent 4 }}
+spec:
+  # One replica: MCP sessions are held in memory by the Streamable HTTP transport.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "kube-ops-mcp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kube-ops-mcp.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "kube-ops-mcp.fullname" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: KUBE_OPS_TRANSPORT
+              value: http
+            - name: KUBE_OPS_HOST
+              value: 0.0.0.0
+            - name: KUBE_OPS_PORT
+              value: "8000"
+            - name: KUBE_OPS_ALLOWED_HOSTS
+              value: {{ include "kube-ops-mcp.allowedHosts" . | quote }}
+            {{- with .Values.clusterName }}
+            - name: KUBE_OPS_CLUSTER_NAME
+              value: {{ . | quote }}
+            {{- end }}
+            - name: PROMETHEUS_URL
+              value: {{ .Values.prometheus.url | quote }}
+            - name: KUBE_OPS_K8S_TIMEOUT
+              value: {{ .Values.timeoutSeconds.kubernetes | quote }}
+            - name: KUBE_OPS_PROMETHEUS_TIMEOUT
+              value: {{ .Values.timeoutSeconds.prometheus | quote }}
+            - name: KUBE_OPS_ENABLE_WRITE
+              value: {{ .Values.write.enabled | quote }}
+            - name: ALLOWED_NAMESPACES
+              value: {{ join "," .Values.write.allowedNamespaces | quote }}
+            - name: KUBE_OPS_MAX_REPLICAS
+              value: {{ .Values.write.maxReplicas | quote }}
+            - name: KUBE_OPS_REQUIRE_CONFIRMATION
+              value: {{ .Values.write.requireConfirmation | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
