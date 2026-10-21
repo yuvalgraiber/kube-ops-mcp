@@ -1,0 +1,39 @@
+name: Bug report
+description: Something doesn't work the way the README says it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran or asked, and what you got back.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: How you run it
+      options:
+        - Local (stdio) from a clone
+        - Local (stdio) with uvx
+        - In a cluster with the Helm chart
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: kube-ops-mcp version, Kubernetes version and MCP client
+      placeholder: 0.1.2, Kubernetes 1.37, Claude Code 2.1
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server logs
+      description: The startup line and the audit lines from stderr. Remove anything private first.
+      render: json
