@@ -19,5 +19,5 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
 kubectl apply -f broken-apps.yaml
 
 echo
-echo "Demo ready. Prometheus: kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090"
+echo "Demo ready. Expose Prometheus on localhost:9090 with: make port-forward"
 echo "Watch the failures: kubectl -n demo get pods -w"
