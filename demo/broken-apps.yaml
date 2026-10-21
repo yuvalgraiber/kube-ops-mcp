@@ -4,7 +4,7 @@ kind: Namespace
 metadata:
   name: demo
 ---
-# Failure 1: CrashLoopBackOff — the app exits because DATABASE_URL is not set.
+# Failure 1: CrashLoopBackOff. The app exits because DATABASE_URL is not set.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,7 +42,7 @@ spec:
               cpu: 100m
               memory: 32Mi
 ---
-# Failure 2: OOMKilled — the app allocates ~150Mi against a 64Mi memory limit.
+# Failure 2: OOMKilled. The app allocates ~150Mi against a 64Mi memory limit.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

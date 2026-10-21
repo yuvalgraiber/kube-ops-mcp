@@ -10,7 +10,7 @@ RELEASE := kube-ops-mcp
 RELEASE_NS := kube-ops
 
 .PHONY: help install lint fmt test check run inspector demo-up demo-down port-forward \
-	image helm-lint deploy undeploy port-forward-mcp
+	image helm-lint deploy undeploy port-forward-mcp demo-gif
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -66,3 +66,6 @@ undeploy: ## Remove the chart from the demo cluster
 
 port-forward-mcp: ## Expose the in-cluster MCP server on localhost:8000
 	kubectl -n $(RELEASE_NS) port-forward svc/$(RELEASE) 8000:8000
+
+demo-gif: ## Re-record docs/demo.gif (needs the demo cluster, port-forward and vhs)
+	vhs docs/demo.tape
