@@ -7,7 +7,15 @@ from functools import cache
 from typing import Any
 
 from kubernetes import client, config
-from kubernetes.client import ApiException, CoreV1Event, V1ContainerStatus, V1Deployment, V1Pod
+from kubernetes.client import (
+    ApiException,
+    CoreV1Event,
+    V1ContainerStatus,
+    V1Deployment,
+    V1ObjectMeta,
+    V1Pod,
+    V1PodStatus,
+)
 from urllib3.exceptions import HTTPError
 
 # RFC 1123 label: namespaces, deployments, containers.
@@ -212,16 +220,17 @@ def cluster_summary(timeout: float) -> dict[str, Any]:
     namespaces = _call("listing namespaces", timeout, core_v1().list_namespace).items
     version = _call("reading the server version", timeout, version_api().get_code)
     ready_nodes = sum(
-        1
+        any(c.type == "Ready" and c.status == "True" for c in node.status.conditions or [])
         for node in nodes
-        for cond in node.status.conditions or []
-        if cond.type == "Ready" and cond.status == "True"
+        if node.status
     )
     return {
         "cluster": cluster_name(),
         "kubernetes_version": version.git_version,
         "nodes": {"total": len(nodes), "ready": ready_nodes},
-        "namespaces": sorted(ns.metadata.name for ns in namespaces),
+        "namespaces": sorted(
+            ns.metadata.name for ns in namespaces if ns.metadata and ns.metadata.name
+        ),
     }
 
 
@@ -262,7 +271,7 @@ def scale_deployment(namespace: str, name: str, replicas: int, timeout: float) -
         namespace,
         {"spec": {"replicas": replicas}},
     )
-    return scale.spec.replicas
+    return scale.spec.replicas if scale.spec and scale.spec.replicas is not None else 0
 
 
 # --- Summaries ---------------------------------------------------------------------------
@@ -271,21 +280,22 @@ def scale_deployment(namespace: str, name: str, replicas: int, timeout: float) -
 def summarize_pod(pod: V1Pod, now: datetime | None = None) -> dict[str, Any]:
     """Reduce a V1Pod to the fields that matter for triage."""
     now = now or datetime.now(UTC)
-    statuses = pod.status.container_statuses or []
-    containers = [_summarize_container(cs) for cs in statuses]
+    # Every field is optional in the API model; a pod that was just created may lack status.
+    meta = pod.metadata or V1ObjectMeta()
+    status = pod.status or V1PodStatus()
+    statuses = status.container_statuses or []
     ready = sum(1 for cs in statuses if cs.ready)
-    total = len(pod.spec.containers)
-    status = _pod_status(pod)
+    total = len(pod.spec.containers) if pod.spec else len(statuses)
     return {
-        "name": pod.metadata.name,
-        "status": status,
-        "healthy": _is_healthy(pod.status.phase, ready, total)
+        "name": meta.name,
+        "status": _pod_status(meta, status),
+        "healthy": _is_healthy(status.phase, ready, total)
         and not _restarted_recently(statuses, now),
         "ready": f"{ready}/{total}",
         "restarts": sum(cs.restart_count for cs in statuses),
-        "age": _age(pod.metadata.creation_timestamp, now),
-        "node": pod.spec.node_name,
-        "containers": containers,
+        "age": _age(meta.creation_timestamp, now),
+        "node": pod.spec.node_name if pod.spec else None,
+        "containers": [_summarize_container(cs) for cs in statuses],
     }
 
 
@@ -319,23 +329,23 @@ def _summarize_container(cs: V1ContainerStatus) -> dict[str, Any]:
     return summary
 
 
-def _pod_status(pod: V1Pod) -> str:
+def _pod_status(meta: V1ObjectMeta, status: V1PodStatus) -> str:
     """Return the same headline status `kubectl get pods` would show."""
-    if pod.metadata.deletion_timestamp:
+    if meta.deletion_timestamp:
         return "Terminating"
-    if pod.status.reason:  # e.g. Evicted
-        return pod.status.reason
-    for cs in pod.status.init_container_statuses or []:
+    if status.reason:  # e.g. Evicted
+        return status.reason
+    for cs in status.init_container_statuses or []:
         if cs.state and cs.state.waiting and cs.state.waiting.reason:
             return f"Init:{cs.state.waiting.reason}"
         if cs.state and cs.state.terminated and cs.state.terminated.exit_code != 0:
             return f"Init:{cs.state.terminated.reason or 'Error'}"
-    for cs in pod.status.container_statuses or []:
+    for cs in status.container_statuses or []:
         if cs.state and cs.state.waiting and cs.state.waiting.reason:
             return cs.state.waiting.reason
         if cs.state and cs.state.terminated and cs.state.terminated.reason:
             return cs.state.terminated.reason
-    return pod.status.phase or "Unknown"
+    return status.phase or "Unknown"
 
 
 def _is_healthy(phase: str | None, ready: int, total: int) -> bool:
@@ -392,8 +402,8 @@ def summarize_event(event: CoreV1Event, now: datetime) -> dict[str, Any]:
 
 def recent_events(events: list[CoreV1Event], window: timedelta, now: datetime) -> list[CoreV1Event]:
     """Keep events seen within `window`, newest first."""
-    recent = [e for e in events if (t := _event_time(e)) is not None and now - t <= window]
-    return sorted(recent, key=_event_time, reverse=True)
+    timed = [(t, e) for e in events if (t := _event_time(e)) is not None and now - t <= window]
+    return [e for _, e in sorted(timed, key=lambda pair: pair[0], reverse=True)]
 
 
 def _event_time(event: CoreV1Event) -> datetime | None:

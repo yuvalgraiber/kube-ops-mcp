@@ -42,6 +42,7 @@ async def query(
 ) -> dict[str, Any]:
     """Run an instant query, or a range query over the last `range_minutes` minutes."""
     validate_query(promql, range_minutes)
+    params: dict[str, str | float]
     if range_minutes is None:
         path, params = "/api/v1/query", {"query": promql}
     else:

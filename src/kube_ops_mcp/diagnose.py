@@ -11,7 +11,7 @@ from functools import partial
 from typing import Any
 
 import anyio.to_thread
-from kubernetes.client import V1Deployment
+from kubernetes.client import V1Deployment, V1DeploymentStatus
 
 from kube_ops_mcp import k8s, prometheus
 from kube_ops_mcp.config import Settings
@@ -143,14 +143,14 @@ def related_names(deployment: str, pod_names: list[str]) -> set[str]:
 
 
 def deployment_status(dep: V1Deployment) -> dict[str, Any]:
-    status = dep.status
+    status = dep.status or V1DeploymentStatus()
     problems = [
         {"type": c.type, "reason": c.reason, "message": c.message}
         for c in status.conditions or []
         if c.status != "True" or c.reason == "ProgressDeadlineExceeded"
     ]
     return {
-        "desired": dep.spec.replicas,
+        "desired": dep.spec.replicas if dep.spec else None,
         "ready": status.ready_replicas or 0,
         "available": status.available_replicas or 0,
         "updated": status.updated_replicas or 0,

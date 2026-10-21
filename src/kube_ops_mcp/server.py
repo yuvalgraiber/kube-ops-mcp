@@ -50,7 +50,9 @@ DeploymentName = Annotated[str, Field(description="Deployment name, e.g. 'paymen
 
 
 def _read_only(title: str) -> ToolAnnotations:
-    return ToolAnnotations(title=title, readOnlyHint=True, idempotentHint=True, openWorldHint=True)
+    return ToolAnnotations(
+        title=title, read_only_hint=True, idempotent_hint=True, open_world_hint=True
+    )
 
 
 # --- Read tools --------------------------------------------------------------------------
@@ -374,15 +376,18 @@ if settings.enable_write:
         restart_deployment,
         annotations=ToolAnnotations(
             title="Restart deployment",
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=False,
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=False,
         ),
     )
     mcp.add_tool(
         scale_deployment,
         annotations=ToolAnnotations(
-            title="Scale deployment", readOnlyHint=False, destructiveHint=True, idempotentHint=True
+            title="Scale deployment",
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
         ),
     )
 

@@ -11,6 +11,8 @@ from kubernetes.client import (
     V1DeploymentSpec,
     V1LabelSelector,
     V1LabelSelectorRequirement,
+    V1ObjectMeta,
+    V1Pod,
     V1PodTemplateSpec,
 )
 from urllib3.exceptions import MaxRetryError
@@ -355,3 +357,13 @@ def test_limit_pods_puts_unhealthy_first_and_shortens_healthy() -> None:
     assert [p["name"] for p in shown] == ["bad", "ok-0", "ok-1", "ok-2"]
     assert "containers" in shown[0] and "containers" not in shown[1]
     assert omitted == 7
+
+
+def test_pod_without_status_yet_does_not_crash() -> None:
+    pod = V1Pod(metadata=V1ObjectMeta(name="just-created"))
+
+    summary = k8s.summarize_pod(pod, NOW)
+
+    assert summary["status"] == "Unknown"
+    assert summary["healthy"] is False
+    assert summary["ready"] == "0/0"
