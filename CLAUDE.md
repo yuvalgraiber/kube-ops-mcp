@@ -4,7 +4,7 @@ MCP server for read-only Kubernetes incident triage. Python 3.12, uv, MCP Python
 
 ## Commands
 
-- `make check` runs ruff, the format check, helm lint and pytest. Run it before every commit; CI runs the same steps.
+- `make check` runs ruff, the format check, mypy, helm lint and pytest. Run it before every commit; CI runs the same steps on Python 3.12 to 3.14.
 - `make demo-up` / `make demo-down` create and delete the kind demo cluster. `make port-forward` exposes its Prometheus on :9090.
 - `make deploy` builds the image, loads it into kind, installs the chart and runs `helm test`.
 - To check a tool against the live demo cluster: `npx -y @modelcontextprotocol/inspector@2.9.0 --cli uv run kube-ops-mcp --method tools/call --tool-name get_pod_status --tool-arg namespace=demo`. Put `-e KEY=VALUE` after the server command.
@@ -37,6 +37,8 @@ MCP server for read-only Kubernetes incident triage. Python 3.12, uv, MCP Python
 
 - In SDK 2.x `FastMCP` is called `MCPServer` (`from mcp.server.mcpserver import MCPServer`). Check the installed package before trusting v1 examples.
 - `ServerMiddleware` gets the serialized wire dict (camelCase keys) from `call_next`, not a model.
+- The kubelet can return `unable to retrieve container logs for ...` as a 200 log body; `k8s.read_logs` turns it into an error.
+- Every field of a kubernetes model is optional (`pod.status` can be `None`); mypy catches missed cases.
 - Client logging is deprecated in the 2026-07-28 spec. Claude Code doesn't declare the sampling capability.
 
 ## Commits
