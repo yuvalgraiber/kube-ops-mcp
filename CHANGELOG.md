@@ -2,6 +2,21 @@
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org/).
 
+## [0.1.2] - 2026-10-22
+
+### Fixed
+
+- `get_pod_status` and `diagnose_workload` stay useful on namespaces with hundreds of pods. A 300-pod namespace used to hit the output cap and lose the whole result; unhealthy pods now come first in full and healthy ones are shortened.
+- When a container instance is already gone, the kubelet can return its error message as the log body. That text is now reported as an error instead of being shown as the app's log, and `diagnose_workload` falls back to the current logs.
+- Pods, nodes and deployments with missing optional fields (for example a pod with no status yet) no longer cause errors.
+- Events without an object name, and scalar PromQL results, are handled.
+
+### Added
+
+- CI runs on Python 3.12, 3.13 and 3.14, and type-checks the code with mypy.
+- Contributing guide, code of conduct, and issue and pull request templates.
+- A shorter demo recording.
+
 ## [0.1.1] - 2026-10-21
 
 ### Added
@@ -30,5 +45,6 @@ First release.
 - Helm chart (`oci://ghcr.io/yuvalgraiber/charts/kube-ops-mcp`) with read-only RBAC, a hardened pod spec, a NetworkPolicy and a `helm test` hook.
 - kind demo environment with two deliberately broken apps.
 
+[0.1.2]: https://github.com/yuvalgraiber/kube-ops-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/yuvalgraiber/kube-ops-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/yuvalgraiber/kube-ops-mcp/releases/tag/v0.1.0
