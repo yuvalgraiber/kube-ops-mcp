@@ -367,3 +367,19 @@ def test_pod_without_status_yet_does_not_crash() -> None:
     assert summary["status"] == "Unknown"
     assert summary["healthy"] is False
     assert summary["ready"] == "0/0"
+
+
+def test_kubelet_error_returned_as_log_body_is_an_error(api: MagicMock) -> None:
+    api.read_namespaced_pod_log.return_value = (
+        "unable to retrieve container logs for containerd://fd05a1b2c3"
+    )
+
+    with pytest.raises(k8s.KubernetesError, match="no longer available"):
+        k8s.read_logs("demo", "web-1", "app", tail_lines=20, previous=True, timeout=3)
+
+
+def test_real_logs_mentioning_the_phrase_are_kept(api: MagicMock) -> None:
+    text = "unable to retrieve container logs for x\nbut the app kept running"
+    api.read_namespaced_pod_log.return_value = text
+
+    assert k8s.read_logs("demo", "web-1", "app", tail_lines=20, previous=False, timeout=3) == text

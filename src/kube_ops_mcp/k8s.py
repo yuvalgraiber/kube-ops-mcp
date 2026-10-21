@@ -25,6 +25,7 @@ _DNS_SUBDOMAIN = re.compile(r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$")
 _MAX_MESSAGE_CHARS = 300
 MAX_LOG_LINES = 500
 _MAX_LOG_BYTES = 64 * 1024
+_KUBELET_LOG_ERROR = "unable to retrieve container logs for "
 # A container that terminated this recently is still "flapping", even if it is Running now.
 RECENT_RESTART_WINDOW = timedelta(minutes=15)
 RESTARTED_AT_ANNOTATION = "kubectl.kubernetes.io/restartedAt"
@@ -172,7 +173,7 @@ def read_logs(
     if previous:
         kwargs["previous"] = True
     which = "previous " if previous else ""
-    return _call(
+    text: str = _call(
         f"reading {which}logs of pod {namespace}/{pod}",
         timeout,
         core_v1().read_namespaced_pod_log,
@@ -180,6 +181,14 @@ def read_logs(
         namespace,
         **kwargs,
     )
+    # When the container instance is already gone, the kubelet can answer 200 OK with its
+    # error message as the log body. Treat it as the error it is.
+    if text.startswith(_KUBELET_LOG_ERROR) and len(text.splitlines()) <= 1:
+        raise KubernetesError(
+            f"The {which}logs of pod {namespace}/{pod} are no longer available "
+            f"(kubelet: {text.strip()[:_MAX_MESSAGE_CHARS]})."
+        )
+    return text
 
 
 def get_deployment(namespace: str, name: str, timeout: float) -> V1Deployment:
