@@ -48,17 +48,20 @@ async def diagnose_workload(
 
     await progress(1, "Reading warning events")
     events = await _thread(k8s.list_warning_events, namespace, timeout)
+    names = related_names(deployment, [p["name"] for p in pod_summaries])
     event_summaries = [
         k8s.summarize_event(e, now)
         for e in k8s.recent_events(events, EVENT_WINDOW, now)
-        if _belongs_to(e.involved_object.name, deployment)
+        if e.involved_object.name in names
     ][:MAX_EVENTS]
 
     await progress(2, "Reading logs of unhealthy pods")
     logs: dict[str, list[str]] = {}
     for pod in [p for p in pod_summaries if not p["healthy"]][:MAX_PODS_WITH_LOGS]:
         for container in pod["containers"]:
-            if container["ready"] and "last_termination" not in container:
+            crashed = "last_termination" in container
+            # Skip healthy containers and ones that never started (e.g. image pull errors).
+            if not crashed and (container["ready"] or container["state"] == "waiting"):
                 continue
             key = f"{pod['name']}/{container['name']}"
             try:
@@ -68,7 +71,7 @@ async def diagnose_workload(
                     pod["name"],
                     container["name"],
                     LOG_TAIL_LINES,
-                    "last_termination" in container,
+                    crashed,
                     timeout,
                 )
             except k8s.KubernetesError as exc:
@@ -108,9 +111,14 @@ async def _thread(fn: Callable[..., Any], *args: Any) -> Any:
     return await anyio.to_thread.run_sync(partial(fn, *args))
 
 
-def _belongs_to(object_name: str, deployment: str) -> bool:
-    """The deployment itself, its ReplicaSets and its pods all share the name prefix."""
-    return object_name == deployment or object_name.startswith(f"{deployment}-")
+def related_names(deployment: str, pod_names: list[str]) -> set[str]:
+    """The deployment, its pods, and their ReplicaSets (pod name minus the last segment).
+
+    Exact names, not a prefix match, so diagnosing "web" ignores events of "web-api".
+    """
+    names = {deployment, *pod_names}
+    names.update(name.rsplit("-", 1)[0] for name in pod_names if "-" in name)
+    return names
 
 
 def deployment_status(dep: V1Deployment) -> dict[str, Any]:

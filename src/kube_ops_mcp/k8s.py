@@ -163,8 +163,26 @@ def get_deployment(namespace: str, name: str, timeout: float) -> V1Deployment:
 
 
 def deployment_selector(deployment: V1Deployment) -> str:
-    labels = (deployment.spec.selector.match_labels or {}) if deployment.spec.selector else {}
-    return ",".join(f"{k}={v}" for k, v in sorted(labels.items()))
+    """Render the deployment's label selector, including matchExpressions, as a string."""
+    selector = deployment.spec.selector
+    if selector is None:
+        raise KubernetesError("The deployment has no pod selector.")
+    parts = [f"{k}={v}" for k, v in sorted((selector.match_labels or {}).items())]
+    for expr in selector.match_expressions or []:
+        values = ",".join(expr.values or [])
+        match expr.operator:
+            case "In":
+                parts.append(f"{expr.key} in ({values})")
+            case "NotIn":
+                parts.append(f"{expr.key} notin ({values})")
+            case "Exists":
+                parts.append(expr.key)
+            case "DoesNotExist":
+                parts.append(f"!{expr.key}")
+    if not parts:
+        # An empty selector would match every pod in the namespace.
+        raise KubernetesError("The deployment's pod selector is empty.")
+    return ",".join(parts)
 
 
 def cluster_summary(timeout: float) -> dict[str, Any]:

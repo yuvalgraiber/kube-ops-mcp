@@ -11,11 +11,16 @@ from kubernetes.client import (
     V1ContainerStateTerminated,
     V1ContainerStateWaiting,
     V1ContainerStatus,
+    V1Deployment,
+    V1DeploymentSpec,
+    V1LabelSelector,
+    V1LabelSelectorRequirement,
     V1ObjectMeta,
     V1ObjectReference,
     V1Pod,
     V1PodSpec,
     V1PodStatus,
+    V1PodTemplateSpec,
 )
 from urllib3.exceptions import MaxRetryError
 
@@ -219,3 +224,24 @@ def test_not_found_becomes_actionable_message(api: MagicMock) -> None:
 
     with pytest.raises(k8s.KubernetesError, match="Not found"):
         k8s.list_pods("demo", None, timeout=3)
+
+
+def deployment_with(selector: V1LabelSelector) -> V1Deployment:
+    return V1Deployment(spec=V1DeploymentSpec(selector=selector, template=V1PodTemplateSpec()))
+
+
+def test_selector_includes_match_expressions() -> None:
+    selector = V1LabelSelector(
+        match_labels={"app": "web"},
+        match_expressions=[
+            V1LabelSelectorRequirement(key="tier", operator="In", values=["a", "b"]),
+            V1LabelSelectorRequirement(key="canary", operator="DoesNotExist"),
+        ],
+    )
+
+    assert k8s.deployment_selector(deployment_with(selector)) == "app=web,tier in (a,b),!canary"
+
+
+def test_empty_selector_is_refused_instead_of_matching_every_pod() -> None:
+    with pytest.raises(k8s.KubernetesError, match="empty"):
+        k8s.deployment_selector(deployment_with(V1LabelSelector()))

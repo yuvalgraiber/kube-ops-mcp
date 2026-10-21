@@ -112,10 +112,11 @@ def test_error_line_prefers_the_latest_error() -> None:
     assert diagnose.error_line([]) is None
 
 
-def test_belongs_to_matches_deployment_replicasets_and_pods() -> None:
-    assert diagnose._belongs_to("web", "web")
-    assert diagnose._belongs_to("web-7d9f8-abcde", "web")
-    assert not diagnose._belongs_to("webhook", "web")
+def test_related_names_are_exact_and_include_replicasets() -> None:
+    names = diagnose.related_names("web", ["web-7d9f8-abcde"])
+
+    assert names == {"web", "web-7d9f8", "web-7d9f8-abcde"}
+    assert "web-api-5c6d7-xyz12" not in names
 
 
 def test_deployment_status_reports_problem_conditions() -> None:
