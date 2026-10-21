@@ -1,146 +1,161 @@
 # kube-ops-mcp
 
-An [MCP](https://modelcontextprotocol.io) server that lets AI assistants like Claude Code triage Kubernetes incidents. It is **read-only by default**.
+[![CI](https://github.com/yuvalgraiber/kube-ops-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/yuvalgraiber/kube-ops-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
 
-Ask *"Why is payment-service failing in the demo namespace?"* and the assistant checks pod status, events, crash logs and Prometheus metrics, then explains the root cause with evidence:
+An MCP server that lets Claude Code (or any MCP client) investigate a broken Kubernetes workload the way an on-call engineer would: pod status, events, crash logs and Prometheus metrics, then a root cause with the evidence behind it. It is read-only unless you explicitly turn writes on.
 
-> **payment-service** is in CrashLoopBackOff: the container exits with code 1 because `DATABASE_URL` is not set (log: `FATAL: required environment variable DATABASE_URL is not set`). Add the variable to the Deployment.
+![Claude Code triaging a crash-looping deployment with kube-ops-mcp](docs/demo.gif)
 
-> **Status:** work in progress. CI and release images are next on the [roadmap](#roadmap).
+## Why
 
-## How it works
+When a pod crash-loops at 3am, the first ten minutes are always the same: `kubectl get pods`, `describe`, `logs --previous`, check the events, open Grafana to see whether memory hit the limit. None of it is hard, but it's slow and easy to get wrong when you're tired.
 
-The server runs in one of two places:
+I wanted an assistant that does that loop for me and shows its work, without giving an AI write access to a cluster. So the server only reads by default, and the few write actions it has are fenced in by an allow-list and a confirmation prompt.
 
-| Mode | Where it runs | Which cluster it sees | Permissions |
-|---|---|---|---|
-| **Local** (stdio) | On your machine, started by Claude Code | Your kubeconfig context (pin one with `KUBE_OPS_CONTEXT`) | Your own kubectl permissions |
-| **In-cluster** (Streamable HTTP) | As a pod, installed with Helm | The cluster it runs in | Its own read-only ServiceAccount |
+## Try it
 
-```mermaid
-flowchart LR
-    A[Claude Code] -- "stdio (local)<br/>or HTTP (in-cluster)" --> S
-    subgraph S[kube-ops-mcp]
-        M[Safety middleware<br/>redact · cap · audit] --> T[Tools]
-    end
-    T -- get/list --> K[Kubernetes API]
-    T -- PromQL --> P[Prometheus]
-```
-
-Every tool call passes through one middleware that redacts secrets, caps the output size and writes a JSON audit line, so no tool can skip those steps. Every result names the cluster it came from.
-
-It works with any conformant Kubernetes cluster (kind, EKS, GKE, AKS…). Metrics need Prometheus; the queries use the standard cAdvisor and kube-state-metrics series from kube-prometheus-stack. Without Prometheus, every other tool still works and `diagnose_workload` reports the metrics as unavailable.
-
-## Quickstart
-
-Needs Docker, [kind](https://kind.sigs.k8s.io), kubectl, Helm, [uv](https://docs.astral.sh/uv/) and [Claude Code](https://claude.com/claude-code).
+You need Docker, [kind](https://kind.sigs.k8s.io), kubectl, Helm, [uv](https://docs.astral.sh/uv/) and [Claude Code](https://claude.com/claude-code).
 
 ```bash
 git clone https://github.com/yuvalgraiber/kube-ops-mcp && cd kube-ops-mcp
-make install        # Python dependencies from the lock file
-make demo-up        # kind cluster + Prometheus + deliberately broken apps
-make port-forward   # in a second terminal: Prometheus on localhost:9090
-claude              # start it inside the repo, approve the kube-ops server, then: /triage payment-service
+make install        # Python dependencies from uv.lock
+make demo-up        # kind cluster, Prometheus and three demo apps
+make port-forward   # keep running in a second terminal (Prometheus on :9090)
+claude              # run it from the repo folder and approve the kube-ops server
 ```
 
-The demo namespace contains two broken apps and one healthy app:
+Then ask *"why is payment-service failing in demo?"* or run `/triage payment-service`.
 
-| App | Failure | Cause |
+The demo namespace has two apps that are broken on purpose and one healthy one to compare against:
+
+| App | What you'll see | Why |
 |---|---|---|
-| `payment-service` | CrashLoopBackOff | A required environment variable is missing |
-| `recommendation-service` | OOMKilled | It uses about 150 MiB against a 64 MiB limit |
-| `frontend` | none | Healthy baseline |
+| `payment-service` | CrashLoopBackOff | `DATABASE_URL` is missing, so it exits with code 1 |
+| `recommendation-service` | OOMKilled | It allocates ~150 MiB with a 64 MiB limit |
+| `frontend` | Running | Healthy baseline |
 
-## Run it in your cluster
+## How it works
+
+Claude Code starts the server and talks to it over MCP. The server talks to the Kubernetes API and Prometheus, and every tool call goes through one middleware layer that masks secrets, caps the response size and writes an audit line.
+
+```mermaid
+flowchart LR
+    A[Claude Code] -- "stdio (local) or HTTP (in-cluster)" --> S
+    subgraph S[kube-ops-mcp]
+        M[Safety middleware: redact, cap, audit] --> T[Tools]
+    end
+    T -- get / list --> K[Kubernetes API]
+    T -- PromQL --> P[Prometheus]
+```
+
+It can run in two places:
+
+| | Local | In the cluster |
+|---|---|---|
+| Runs as | A process Claude Code starts on your machine (stdio) | A pod installed with Helm (Streamable HTTP) |
+| Sees | Your current kubeconfig context, or the one in `KUBE_OPS_CONTEXT` | The cluster it runs in |
+| Permissions | Whatever your kubeconfig user can do | Its own read-only ServiceAccount |
+
+Any conformant cluster works (kind, EKS, GKE, AKS). The metric queries use the standard cAdvisor and kube-state-metrics series that kube-prometheus-stack ships. If there's no Prometheus, the other tools keep working and `diagnose_workload` says the metrics are unavailable instead of failing.
+
+### Tools
+
+| Tool | What it does |
+|---|---|
+| `diagnose_workload` | Investigates a Deployment in one call and returns ranked findings, each with evidence and a suggested fix |
+| `get_pod_status` | Pod status the way `kubectl get pods` shows it, plus restarts and the last exit reason |
+| `get_recent_events` | Warning events from a time window, newest first |
+| `get_pod_logs` | The last N log lines, from the current or the previous (crashed) container |
+| `query_prometheus` | Any PromQL query, instant or over a time range |
+| `restart_deployment` | Rolling restart. Write tool, off by default |
+| `scale_deployment` | Changes replicas within a fixed range. Write tool, off by default |
+
+There's also a `cluster://summary` resource, an `incident_triage` prompt, and the `/triage` slash command for Claude Code in `.claude/commands/`.
+
+## Running it in a cluster
 
 ```bash
-make deploy              # build the image, load it into the kind demo cluster, install the chart, run helm test
-make port-forward-mcp    # in a second terminal: the in-cluster server on localhost:8000
+make deploy             # build the image, load it into kind, install the chart, run helm test
+make port-forward-mcp   # second terminal
 claude mcp add --transport http kube-ops-cluster http://localhost:8000/mcp
 ```
 
-For another cluster, push the image to your registry and install the chart:
+For a real cluster, install the published chart and image:
 
 ```bash
-helm install kube-ops-mcp deploy/helm/kube-ops-mcp -n kube-ops --create-namespace \
-  --set image.repository=<registry>/kube-ops-mcp --set image.tag=<tag> \
+helm install kube-ops-mcp oci://ghcr.io/yuvalgraiber/charts/kube-ops-mcp --version 0.1.0 \
+  -n kube-ops --create-namespace \
   --set clusterName=prod-eu \
   --set prometheus.url=http://prometheus-operated.monitoring.svc:9090
 ```
 
-What the chart sets up:
-- **RBAC:** a ClusterRole with `get`/`list` on pods, pod logs, events, namespaces, nodes, deployments and replicasets, and **no access to secrets or configmaps**. With `write.enabled=true`, it adds a namespaced Role that can only `patch` deployments, and only in each `write.allowedNamespaces` entry.
-- **Hardened pod:** non-root UID 10001, read-only root filesystem, all Linux capabilities dropped, no privilege escalation, `RuntimeDefault` seccomp, and liveness and readiness probes.
-- **Network:** a ClusterIP Service only, plus a NetworkPolicy that accepts traffic only from pods labelled `kube-ops-mcp-client: "true"`. The MCP endpoint has no login of its own, so it is never exposed outside the cluster; `kubectl port-forward` already requires RBAC on `pods/portforward`. DNS-rebinding protection rejects unknown `Host` headers.
-- **Image:** multi-stage build from `uv.lock`, base images pinned by digest, about 70 MB to pull.
+The chart gives the server a ClusterRole that can only `get` and `list` pods, logs, events, namespaces, nodes, deployments and replicasets. It can't read Secrets or ConfigMaps. The pod runs as a non-root user with a read-only filesystem and no Linux capabilities. The Service is ClusterIP only, and a NetworkPolicy lets in only pods labelled `kube-ops-mcp-client: "true"`.
 
-## Tools
+## Safety
 
-| Tool | What it returns | Access |
-|---|---|---|
-| `diagnose_workload` | One-call investigation: status, events, crash logs, CPU/memory vs. limits, ranked findings with evidence and a fix | read |
-| `get_pod_status` | Headline status per pod as `kubectl` shows it, restarts, last termination reason and exit code | read |
-| `get_recent_events` | Warning events in a time window, newest first | read |
-| `get_pod_logs` | Last N log lines, including the previous (crashed) container | read |
-| `query_prometheus` | Instant or range PromQL, with an automatic step and a 50-series cap | read |
-| `restart_deployment` | Rolling restart, like `kubectl rollout restart` | write, off by default |
-| `scale_deployment` | Replica count within 1 to `KUBE_OPS_MAX_REPLICAS` | write, off by default |
+I treated the model as an untrusted caller. Concretely:
 
-The server also provides:
-- the **resource** `cluster://summary` (Kubernetes version, node readiness, namespaces)
-- the **prompt** `incident_triage` (a fixed order: status → events → logs → metrics → hypothesis)
-- the Claude Code **slash command** `/triage <deployment> [namespace]`
+- Write tools aren't even registered unless `KUBE_OPS_ENABLE_WRITE=true`, so the model can't see them.
+- Writes only work in namespaces listed in `ALLOWED_NAMESPACES`, and that check runs before anything else.
+- Every write asks you to confirm through MCP elicitation. If the client can't ask, the write is refused rather than allowed.
+- Scaling is limited to 1 to `KUBE_OPS_MAX_REPLICAS`. Scaling to zero is an outage, so it's not allowed.
+- Tokens, passwords, keys and credentials in URLs are masked in every response before the model sees them. Logs leak secrets more often than people expect.
+- Responses are capped at 25k characters, and every call writes one JSON audit line to stderr.
 
-## Security model
+## Design notes
 
-- **Read-only by default.** Write tools are only registered when `KUBE_OPS_ENABLE_WRITE=true`.
-- **Namespace allow-list.** Write tools only act in namespaces listed in `ALLOWED_NAMESPACES`. Other requests are refused before anything is asked or changed.
-- **Human confirmation.** Every write asks the user to approve it through MCP elicitation. If the client cannot ask, the write is refused (fail closed).
-- **Bounded changes.** Scaling is limited to 1 to `KUBE_OPS_MAX_REPLICAS`, so scaling to 0 isn't allowed.
-- **Secret redaction.** The tokens, passwords, keys and URL credentials that tools return are masked before they reach the model.
-- **Output caps.** Large results are truncated so they don't flood the model's context.
-- **Audit log.** One JSON line per tool call (tool, redacted arguments, outcome, duration) goes to stderr, ready for any log collector.
-- **Timeouts everywhere.** Every Kubernetes and Prometheus call has a timeout, and failures return an actionable message.
-- **Input validation.** Names are checked against Kubernetes naming rules before any API call.
+A few decisions that weren't obvious:
+
+- **A pod that's Running can still be unhealthy.** An OOMKilled container restarts and looks fine for a few seconds. Any container that restarted in the last 15 minutes counts as unhealthy, otherwise the most common failure would be missed half the time.
+- **Crash logs aren't always in `--previous`.** While a container is between restarts, its own logs are the crash logs, and the previous instance may already be gone. `diagnose_workload` picks the right one and falls back if it has to.
+- **Fail closed on confirmation.** Not every MCP client supports elicitation. Allowing writes anyway would make the confirmation step decorative.
+- **One replica.** Streamable HTTP keeps MCP sessions in memory, so the chart runs a single pod. A triage tool doesn't need more.
+- **No CPU limit in the chart.** It only causes throttling. Memory is limited.
+- **No sampling.** I wanted the server to summarize long logs with the client's model, but Claude Code doesn't support MCP sampling yet, so it's on the roadmap instead.
 
 ## Configuration
 
-All settings come from environment variables.
+Everything is configured through environment variables (Helm values set them for you).
 
-| Variable | Default | Purpose |
+| Variable | Default | |
 |---|---|---|
 | `PROMETHEUS_URL` | `http://localhost:9090` | Prometheus base URL |
-| `KUBE_OPS_K8S_TIMEOUT` | `10` | Kubernetes API timeout, in seconds |
-| `KUBE_OPS_PROMETHEUS_TIMEOUT` | `10` | Prometheus timeout, in seconds |
+| `KUBE_OPS_CONTEXT` | current context | Pin a kubeconfig context so a local run can't hit the wrong cluster |
+| `KUBE_OPS_CLUSTER_NAME` | context name, or `in-cluster` | Name shown in results |
 | `KUBE_OPS_ENABLE_WRITE` | `false` | Register the write tools |
-| `ALLOWED_NAMESPACES` | *(empty)* | Comma-separated namespaces that write tools may change |
+| `ALLOWED_NAMESPACES` | empty | Comma-separated namespaces the write tools may touch |
 | `KUBE_OPS_MAX_REPLICAS` | `10` | Upper bound for `scale_deployment` |
-| `KUBE_OPS_REQUIRE_CONFIRMATION` | `true` | Refuse writes when the client cannot ask the user to confirm |
-| `KUBE_OPS_CONTEXT` | *(current context)* | Pin the kubeconfig context, so a local run never targets the wrong cluster |
-| `KUBE_OPS_CLUSTER_NAME` | *(context or `in-cluster`)* | Cluster name reported in results |
-| `KUBE_OPS_TRANSPORT` | `stdio` | `stdio` for a local client, `http` for Streamable HTTP (the container default) |
-| `KUBE_OPS_HOST` / `KUBE_OPS_PORT` | `127.0.0.1` / `8000` | HTTP listen address |
-| `KUBE_OPS_ALLOWED_HOSTS` | `localhost:*,127.0.0.1:*` | Accepted `Host` headers over HTTP (DNS-rebinding protection) |
-
-Kubernetes credentials come from the in-cluster service account, or from your kubeconfig when running locally.
+| `KUBE_OPS_REQUIRE_CONFIRMATION` | `true` | Refuse writes when the client can't ask for confirmation |
+| `KUBE_OPS_K8S_TIMEOUT`, `KUBE_OPS_PROMETHEUS_TIMEOUT` | `10` | Timeouts in seconds |
+| `KUBE_OPS_TRANSPORT` | `stdio` | `http` for Streamable HTTP (the container default) |
+| `KUBE_OPS_HOST`, `KUBE_OPS_PORT` | `127.0.0.1`, `8000` | HTTP listen address |
+| `KUBE_OPS_ALLOWED_HOSTS` | `localhost:*,127.0.0.1:*` | Host headers accepted over HTTP |
 
 ## Development
 
 ```bash
-make help    # list all tasks
-make check   # ruff lint + format check + helm lint + pytest with an 85% coverage gate
-make inspector   # open MCP Inspector against the server
+make help       # all tasks
+make check      # ruff, helm lint, pytest (fails under 85% coverage)
+make inspector  # MCP Inspector against the local server
 ```
 
-The tests mock the Kubernetes API and Prometheus, so no cluster is needed. The server tests drive the real MCP protocol through the SDK's in-memory client, so the middleware and elicitation code paths run for real.
+The tests don't need a cluster. Kubernetes and Prometheus are mocked, and the server tests go through the SDK's in-memory MCP client, so the middleware and the confirmation flow run for real. CI also builds the image, scans it with Trivy, installs the chart on a kind cluster and runs [`scripts/smoke_test.py`](scripts/smoke_test.py) against it.
+
+## Built with
+
+I built this after finishing Anthropic's MCP and Claude Code courses, and it uses most of what they cover:
+
+- **Introduction to Model Context Protocol:** tools, a resource and a prompt ([`server.py`](src/kube_ops_mcp/server.py))
+- **Model Context Protocol: Advanced topics:** Streamable HTTP, progress notifications, elicitation for confirmations, and server middleware ([`safety.py`](src/kube_ops_mcp/safety.py))
+- **Claude Code in action:** the project `.mcp.json`, the `/triage` command and [`CLAUDE.md`](CLAUDE.md). I also used Claude Code throughout development.
 
 ## Roadmap
 
-- [x] Container image, Streamable HTTP transport and a Helm chart with least-privilege RBAC
-- [ ] Authentication for the HTTP endpoint (OAuth, supported by the MCP spec)
-- [ ] GitHub Actions: lint, tests, `helm lint`, image build and push to GHCR, kind smoke test
-- [ ] Demo GIF
-- [ ] LLM log summarization through MCP sampling, once clients support it
+- OAuth for the HTTP endpoint (part of the MCP spec), so it can be exposed beyond port-forward
+- Log summarization with MCP sampling, once clients support it
+- More findings: failing probes with the probe config, pending PVCs, node pressure
 
 ## License
 
