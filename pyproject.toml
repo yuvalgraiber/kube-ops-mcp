@@ -36,6 +36,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "ruff>=0.17.1",
 ]
 
@@ -52,3 +53,11 @@ select = ["E", "F", "I", "UP", "B", "SIM", "S"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--cov=kube_ops_mcp --cov-report=term-missing:skip-covered"
+
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+fail_under = 85
+exclude_also = ['if __name__ == "__main__":']
