@@ -7,8 +7,9 @@ license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["mcp", "kubernetes", "prometheus", "claude", "incident-response"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: System Administrators",
     "Programming Language :: Python :: 3.12",
-    "License :: OSI Approved :: MIT License",
     "Topic :: System :: Monitoring",
 ]
 authors = [
@@ -18,8 +19,12 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
     "kubernetes>=37.0.1",
-    "mcp[cli]>=2.3.0",
+    "mcp[cli]>=2.3.0,<3",  # 2.x renamed core APIs; review majors deliberately
 ]
+
+[project.urls]
+Repository = "https://github.com/yuvalgraiber/kube-ops-mcp"
+Issues = "https://github.com/yuvalgraiber/kube-ops-mcp/issues"
 
 [project.scripts]
 kube-ops-mcp = "kube_ops_mcp.server:main"

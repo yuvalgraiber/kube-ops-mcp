@@ -9,5 +9,6 @@ build/
 *.egg-info/
 .DS_Store
 
-# Local AI assistant instructions
+# Local AI assistant files
 CLAUDE.md
+.claude/settings.local.json
