@@ -1,9 +1,11 @@
 """End-to-end tests through an in-memory MCP client: tools, middleware and elicitation."""
 
+import json
 import os
 import subprocess
 import sys
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -13,6 +15,7 @@ from mcp.client import Client
 
 from kube_ops_mcp import server
 from kube_ops_mcp.config import Settings
+from tests.factories import RUNNING, container, make_event, make_pod
 
 pytestmark = pytest.mark.anyio
 
@@ -105,6 +108,83 @@ async def test_diagnose_reports_progress(monkeypatch: pytest.MonkeyPatch) -> Non
         )
 
     assert updates == [(0, "Reading deployment and pods"), (5, "Done")]
+
+
+async def test_get_pod_status_lists_unhealthy_pods_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    pods = [
+        make_pod("a-healthy", "Running", [container(ready=True, state=RUNNING)]),
+        make_pod("b-pending", "Pending", []),
+    ]
+    monkeypatch.setattr(server.k8s, "list_pods", lambda *a: pods)
+
+    async with Client(server.mcp) as client:
+        result = await client.call_tool("get_pod_status", {"namespace": "demo"})
+
+    content = result.structured_content
+    assert [p["name"] for p in content["pods"]] == ["b-pending", "a-healthy"]
+    assert content["unhealthy_count"] == 1
+
+
+async def test_get_pod_status_explains_an_empty_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server.k8s, "list_pods", lambda *a: [])
+
+    async with Client(server.mcp) as client:
+        result = await client.call_tool("get_pod_status", {"namespace": "demo"})
+
+    assert "No pods found" in result.structured_content["note"]
+
+
+async def test_get_recent_events_filters_by_object_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime.now(UTC)
+    events = [
+        make_event("BackOff", "web-1", now - timedelta(minutes=1)),
+        make_event("BackOff", "db-1", now - timedelta(minutes=1)),
+        make_event("BackOff", "web-2", now - timedelta(hours=3)),
+    ]
+    monkeypatch.setattr(server.k8s, "list_warning_events", lambda *a: events)
+
+    async with Client(server.mcp) as client:
+        result = await client.call_tool(
+            "get_recent_events", {"namespace": "demo", "object_name": "web"}
+        )
+
+    assert [e["object"] for e in result.structured_content["events"]] == ["Pod/web-1"]
+
+
+async def test_kubernetes_failures_reach_the_model_as_tool_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unreachable(*args: Any) -> None:
+        raise server.k8s.KubernetesError("Could not reach the Kubernetes API")
+
+    monkeypatch.setattr(server.k8s, "list_pods", unreachable)
+
+    async with Client(server.mcp) as client:
+        result = await client.call_tool("get_pod_status", {"namespace": "demo"})
+
+    assert result.is_error
+    assert "Could not reach the Kubernetes API" in result.content[0].text
+
+
+async def test_cluster_summary_resource(monkeypatch: pytest.MonkeyPatch) -> None:
+    summary = {"kubernetes_version": "v1.37.0", "nodes": {"total": 1, "ready": 1}}
+    monkeypatch.setattr(server.k8s, "cluster_summary", lambda timeout: summary)
+
+    async with Client(server.mcp) as client:
+        result = await client.read_resource("cluster://summary")
+
+    assert json.loads(result.contents[0].text) == summary
+
+
+async def test_incident_triage_prompt_names_the_workload() -> None:
+    async with Client(server.mcp) as client:
+        result = await client.get_prompt(
+            "incident_triage", {"namespace": "demo", "workload": "payment-service"}
+        )
+
+    text = result.messages[0].content.text
+    assert 'diagnose_workload(namespace="demo", deployment="payment-service")' in text
+    assert "Do not change anything" in text
 
 
 # --- Write tools ---------------------------------------------------------------------------

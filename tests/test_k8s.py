@@ -1,73 +1,22 @@
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from unittest.mock import MagicMock
 
 import pytest
 from kubernetes.client import (
     ApiException,
-    CoreV1Event,
-    V1Container,
     V1ContainerState,
-    V1ContainerStateRunning,
     V1ContainerStateTerminated,
     V1ContainerStateWaiting,
-    V1ContainerStatus,
     V1Deployment,
     V1DeploymentSpec,
     V1LabelSelector,
     V1LabelSelectorRequirement,
-    V1ObjectMeta,
-    V1ObjectReference,
-    V1Pod,
-    V1PodSpec,
-    V1PodStatus,
     V1PodTemplateSpec,
 )
 from urllib3.exceptions import MaxRetryError
 
 from kube_ops_mcp import k8s
-
-NOW = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
-
-
-def make_pod(
-    name: str,
-    phase: str,
-    statuses: list[V1ContainerStatus],
-    *,
-    init_statuses: list[V1ContainerStatus] | None = None,
-    reason: str | None = None,
-) -> V1Pod:
-    return V1Pod(
-        metadata=V1ObjectMeta(name=name, creation_timestamp=NOW - timedelta(minutes=5)),
-        spec=V1PodSpec(containers=[V1Container(name="app")] * max(1, len(statuses))),
-        status=V1PodStatus(
-            phase=phase,
-            reason=reason,
-            container_statuses=statuses,
-            init_container_statuses=init_statuses,
-        ),
-    )
-
-
-def container(
-    *,
-    ready: bool,
-    restarts: int = 0,
-    state: V1ContainerState,
-    last: V1ContainerStateTerminated | None = None,
-) -> V1ContainerStatus:
-    return V1ContainerStatus(
-        name="app",
-        image="example",
-        image_id="",
-        ready=ready,
-        restart_count=restarts,
-        state=state,
-        last_state=V1ContainerState(terminated=last) if last else None,
-    )
-
-
-RUNNING = V1ContainerState(running=V1ContainerStateRunning())
+from tests.factories import NOW, RUNNING, container, make_event, make_pod
 
 
 def test_healthy_pod() -> None:
@@ -186,17 +135,6 @@ def test_unreachable_cluster_becomes_actionable_message(api: MagicMock) -> None:
         k8s.list_pods("demo", None, timeout=3)
 
 
-def make_event(reason: str, name: str, seen: datetime) -> CoreV1Event:
-    return CoreV1Event(
-        metadata=V1ObjectMeta(name=f"{name}.1"),
-        involved_object=V1ObjectReference(kind="Pod", name=name),
-        reason=reason,
-        message=f"{reason} happened",
-        last_timestamp=seen,
-        count=2,
-    )
-
-
 def test_recent_events_filters_by_window_and_sorts_newest_first() -> None:
     old = make_event("BackOff", "web-1", NOW - timedelta(hours=2))
     newer = make_event("BackOff", "web-2", NOW - timedelta(minutes=1))
@@ -245,3 +183,100 @@ def test_selector_includes_match_expressions() -> None:
 def test_empty_selector_is_refused_instead_of_matching_every_pod() -> None:
     with pytest.raises(k8s.KubernetesError, match="empty"):
         k8s.deployment_selector(deployment_with(V1LabelSelector()))
+
+
+def test_read_previous_logs_of_one_container(api: MagicMock) -> None:
+    api.read_namespaced_pod_log.return_value = "line 1\nline 2"
+
+    text = k8s.read_logs("demo", "web-1", "app", tail_lines=20, previous=True, timeout=3)
+
+    assert text == "line 1\nline 2"
+    api.read_namespaced_pod_log.assert_called_once_with(
+        "web-1",
+        "demo",
+        tail_lines=20,
+        limit_bytes=64 * 1024,
+        container="app",
+        previous=True,
+        _request_timeout=3,
+    )
+
+
+def test_only_warning_events_are_requested(api: MagicMock) -> None:
+    api.list_namespaced_event.return_value.items = []
+
+    k8s.list_warning_events("demo", timeout=3)
+
+    api.list_namespaced_event.assert_called_once_with(
+        "demo", field_selector="type=Warning", _request_timeout=3
+    )
+
+
+def test_bad_request_includes_the_api_reason(api: MagicMock) -> None:
+    api.list_namespaced_pod.side_effect = ApiException(status=400, reason="Bad Request")
+    api.list_namespaced_pod.side_effect.body = "unable to parse requirement: bad selector"
+
+    with pytest.raises(k8s.KubernetesError, match="bad selector"):
+        k8s.list_pods("demo", "app==", timeout=3)
+
+
+def test_missing_credentials_are_explained(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_config() -> None:
+        raise k8s.config.ConfigException("none")
+
+    monkeypatch.setattr(k8s.config, "load_incluster_config", no_config)
+    monkeypatch.setattr(k8s.config, "load_kube_config", no_config)
+    k8s._load_config.cache_clear()
+    try:
+        with pytest.raises(k8s.KubernetesError, match="No Kubernetes credentials"):
+            k8s._load_config()
+    finally:
+        k8s._load_config.cache_clear()
+
+
+@pytest.fixture
+def apps(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    mock = MagicMock()
+    monkeypatch.setattr(k8s, "apps_v1", lambda: mock)
+    return mock
+
+
+def test_restart_patches_the_restarted_at_annotation(apps: MagicMock) -> None:
+    k8s.restart_deployment("demo", "web", timeout=3, now=NOW)
+
+    name, namespace, body = apps.patch_namespaced_deployment.call_args.args
+    annotations = body["spec"]["template"]["metadata"]["annotations"]
+    assert (name, namespace) == ("web", "demo")
+    assert annotations == {k8s.RESTARTED_AT_ANNOTATION: NOW.isoformat()}
+
+
+def test_scale_sets_replicas_and_returns_previous_count(apps: MagicMock) -> None:
+    apps.read_namespaced_deployment_scale.return_value.spec.replicas = 2
+
+    previous = k8s.scale_deployment("demo", "web", 4, timeout=3)
+
+    assert previous == 2
+    apps.patch_namespaced_deployment_scale.assert_called_once_with(
+        "web", "demo", {"spec": {"replicas": 4}}, _request_timeout=3
+    )
+
+
+def test_cluster_summary(api: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+    ready = MagicMock(type="Ready", status="True")
+    not_ready = MagicMock(type="Ready", status="False")
+    api.list_node.return_value.items = [
+        MagicMock(status=MagicMock(conditions=[ready])),
+        MagicMock(status=MagicMock(conditions=[not_ready])),
+    ]
+    namespaces = [MagicMock(), MagicMock()]
+    namespaces[0].metadata.name, namespaces[1].metadata.name = "kube-system", "demo"
+    api.list_namespace.return_value.items = namespaces
+    version = MagicMock()
+    version.get_code.return_value.git_version = "v1.37.0"
+    monkeypatch.setattr(k8s, "version_api", lambda: version)
+
+    assert k8s.cluster_summary(timeout=3) == {
+        "kubernetes_version": "v1.37.0",
+        "nodes": {"total": 2, "ready": 1},
+        "namespaces": ["demo", "kube-system"],
+    }

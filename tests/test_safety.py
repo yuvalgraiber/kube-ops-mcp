@@ -102,3 +102,21 @@ def test_audit_line_redacts_arguments(caplog: pytest.LogCaptureFixture) -> None:
     assert entry["tool"] == "query_prometheus"
     assert entry["arguments"] == {"query": "up", "token": safety.REDACTED}
     assert entry["outcome"] == "ok"
+
+
+def test_audit_lines_are_json_on_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    logger = safety.audit_logger
+    saved = (logger.handlers[:], logger.propagate, logger.level)
+    logger.handlers.clear()
+    try:
+        safety.configure_audit_logging()
+        safety.log_event("startup", version="0.1.0")
+    finally:
+        logger.handlers[:], logger.propagate, logger.level = saved
+
+    captured = capsys.readouterr()
+    line = json.loads(captured.err.strip().splitlines()[-1])
+    assert captured.out == ""  # stdout belongs to the MCP stdio transport
+    assert line["event"] == "startup"
+    assert line["version"] == "0.1.0"
+    assert "ts" in line
