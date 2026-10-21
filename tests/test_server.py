@@ -218,30 +218,32 @@ def write_mode(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
     server.mcp.remove_tool("scale_deployment")
 
 
-def answer(action: str, confirm: bool = True) -> Any:
-    asked: list[str] = []
+class User:
+    """Answers the server's confirmation prompts the same way every time, and records them."""
 
-    async def callback(context: Any, params: types.ElicitRequestParams) -> types.ElicitResult:
-        asked.append(params.message)
-        content = {"confirm": confirm} if action == "accept" else None
-        return types.ElicitResult(action=action, content=content)
+    def __init__(self, action: str, confirm: bool = True) -> None:
+        self.action = action
+        self.confirm = confirm
+        self.asked: list[str] = []
 
-    callback.asked = asked  # type: ignore[attr-defined]
-    return callback
+    async def __call__(self, context: Any, params: types.ElicitRequestParams) -> types.ElicitResult:
+        self.asked.append(params.message)
+        content = {"confirm": self.confirm} if self.action == "accept" else None
+        return types.ElicitResult(action=self.action, content=content)
 
 
 RESTART = {"namespace": "demo", "deployment": "web"}
 
 
 async def test_restart_runs_after_user_confirms(write_mode: MagicMock) -> None:
-    callback = answer("accept")
+    user = User("accept")
 
-    async with Client(server.mcp, elicitation_callback=callback) as client:
+    async with Client(server.mcp, elicitation_callback=user) as client:
         result = await client.call_tool("restart_deployment", RESTART)
 
     assert not result.is_error
     assert result.structured_content["approved_by"] == "user"
-    assert "demo/web" in callback.asked[0]
+    assert "demo/web" in user.asked[0]
     write_mode.restart_deployment.assert_called_once()
 
 
@@ -249,7 +251,7 @@ async def test_restart_runs_after_user_confirms(write_mode: MagicMock) -> None:
 async def test_restart_does_nothing_when_user_says_no(
     write_mode: MagicMock, action: str, confirm: bool
 ) -> None:
-    async with Client(server.mcp, elicitation_callback=answer(action, confirm)) as client:
+    async with Client(server.mcp, elicitation_callback=User(action, confirm)) as client:
         result = await client.call_tool("restart_deployment", RESTART)
 
     assert result.is_error
@@ -268,21 +270,21 @@ async def test_restart_fails_closed_without_elicitation(write_mode: MagicMock) -
 async def test_namespace_outside_allow_list_is_refused_before_asking(
     write_mode: MagicMock,
 ) -> None:
-    callback = answer("accept")
+    user = User("accept")
 
-    async with Client(server.mcp, elicitation_callback=callback) as client:
+    async with Client(server.mcp, elicitation_callback=user) as client:
         result = await client.call_tool(
             "restart_deployment", {"namespace": "kube-system", "deployment": "coredns"}
         )
 
     assert result.is_error
     assert "ALLOWED_NAMESPACES" in result.content[0].text
-    assert callback.asked == []
+    assert user.asked == []
     write_mode.restart_deployment.assert_not_called()
 
 
 async def test_scale_within_range(write_mode: MagicMock) -> None:
-    async with Client(server.mcp, elicitation_callback=answer("accept")) as client:
+    async with Client(server.mcp, elicitation_callback=User("accept")) as client:
         result = await client.call_tool(
             "scale_deployment", {"namespace": "demo", "deployment": "web", "replicas": 3}
         )
@@ -294,7 +296,7 @@ async def test_scale_within_range(write_mode: MagicMock) -> None:
 
 @pytest.mark.parametrize("replicas", [0, 6])
 async def test_scale_out_of_range_is_refused(write_mode: MagicMock, replicas: int) -> None:
-    async with Client(server.mcp, elicitation_callback=answer("accept")) as client:
+    async with Client(server.mcp, elicitation_callback=User("accept")) as client:
         result = await client.call_tool(
             "scale_deployment", {"namespace": "demo", "deployment": "web", "replicas": replicas}
         )
