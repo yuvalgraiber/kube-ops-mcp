@@ -1,6 +1,7 @@
 # Recorded with https://github.com/charmbracelet/vhs: `vhs docs/demo.tape`, which writes
 # docs/demo-raw.mp4. docs/demo.gif is that recording with the two waits for the model
-# played at 3x speed and each answer held for about 4 seconds (ffmpeg trim + setpts).
+# sped up (6x for the first, 2.3x for the second so its PromQL query stays readable)
+# and the first answer held for about 4 seconds (ffmpeg trim + setpts).
 #
 # Needs the demo cluster (make demo-up), Prometheus on :9090 (make port-forward) and an
 # approved kube-ops server in Claude Code. File and shell tools are turned off so every
