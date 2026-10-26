@@ -246,6 +246,8 @@ The tests don't need a cluster. Kubernetes and Prometheus are mocked, and the se
 
 CI runs the checks on Python 3.12, 3.13 and 3.14, then builds the image, fails on fixable HIGH or CRITICAL CVEs (Trivy), installs the chart on a kind cluster with the demo apps, checks that the ServiceAccount really is read-only and drives the server over MCP with [`scripts/smoke_test.py`](scripts/smoke_test.py). Pushing a `vX.Y.Z` tag publishes multi-arch images with an SBOM and signed provenance, the chart and the release notes from [CHANGELOG.md](CHANGELOG.md).
 
+CodeQL scans the Python code and the workflows, Dependabot keeps dependencies and pinned actions current, and secret scanning with push protection is on for the repository.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) if you'd like to help.
 
 ## Built with
