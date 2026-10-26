@@ -17,4 +17,6 @@ Reply with:
 - **Evidence**: the exact status, exit code, log line, event or metric that proves it.
 - **Fix**: the concrete change (manifest field, value or command).
 
+Base the answer only on what the kube-ops tools return. Don't read local files or manifests and don't run shell commands: in a real incident the repository may not match what is running.
+
 Do not change anything in the cluster. If a restart or scale would help, suggest it and let me decide.
