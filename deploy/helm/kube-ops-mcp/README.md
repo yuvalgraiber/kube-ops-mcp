@@ -3,7 +3,7 @@
 Runs [kube-ops-mcp](https://github.com/yuvalgraiber/kube-ops-mcp) inside a cluster with a read-only ServiceAccount, so MCP clients can triage workloads without using personal credentials.
 
 ```bash
-helm install kube-ops-mcp oci://ghcr.io/yuvalgraiber/charts/kube-ops-mcp --version 0.1.2 \
+helm install kube-ops-mcp oci://ghcr.io/yuvalgraiber/charts/kube-ops-mcp --version 0.1.3 \
   -n kube-ops --create-namespace --set clusterName=prod-eu
 helm test kube-ops-mcp -n kube-ops
 ```

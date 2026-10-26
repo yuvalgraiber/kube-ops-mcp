@@ -2,6 +2,17 @@
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org/).
 
+## [0.1.3] - 2026-10-26
+
+### Added
+
+- `diagnose_workload` shows each container's image, command, arguments, resource requests and limits, and the names of its environment variables (never their values). The model can now see, for example, that a container is told to allocate 150M against a 64Mi limit, or that a required variable isn't set at all.
+
+### Changed
+
+- `/triage` answers only from what the kube-ops tools return and no longer reads local files or runs shell commands, since in a real incident the repository may not match what's running.
+- The demo shows both broken apps.
+
 ## [0.1.2] - 2026-10-22
 
 ### Fixed
@@ -45,6 +56,7 @@ First release.
 - Helm chart (`oci://ghcr.io/yuvalgraiber/charts/kube-ops-mcp`) with read-only RBAC, a hardened pod spec, a NetworkPolicy and a `helm test` hook.
 - kind demo environment with two deliberately broken apps.
 
+[0.1.3]: https://github.com/yuvalgraiber/kube-ops-mcp/releases/tag/v0.1.3
 [0.1.2]: https://github.com/yuvalgraiber/kube-ops-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/yuvalgraiber/kube-ops-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/yuvalgraiber/kube-ops-mcp/releases/tag/v0.1.0
