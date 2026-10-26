@@ -3,14 +3,18 @@ from typing import Any
 
 import pytest
 from kubernetes.client import (
+    V1Container,
     V1ContainerState,
     V1ContainerStateTerminated,
     V1Deployment,
     V1DeploymentCondition,
     V1DeploymentSpec,
     V1DeploymentStatus,
+    V1EnvVar,
     V1LabelSelector,
+    V1PodSpec,
     V1PodTemplateSpec,
+    V1ResourceRequirements,
 )
 
 from kube_ops_mcp import diagnose, k8s, prometheus
@@ -332,3 +336,31 @@ def test_affected_list_is_capped_for_big_deployments() -> None:
 
     assert len(finding["affected"]) == diagnose.MAX_AFFECTED_SHOWN + 1
     assert finding["affected"][-1] == "and 15 more"
+
+
+def test_container_specs_show_env_names_but_never_values() -> None:
+    dep = make_deployment("web")
+    dep.spec.template = V1PodTemplateSpec(
+        spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="app",
+                    image="busybox:1.36",
+                    args=["--vm-bytes", "150M"],
+                    env=[
+                        V1EnvVar(name="DB_HOST", value="db.internal"),
+                        V1EnvVar(name="TOKEN", value="s3cr3t"),
+                    ],
+                    resources=V1ResourceRequirements(limits={"memory": "64Mi"}),
+                )
+            ]
+        )
+    )
+
+    [spec] = diagnose.deployment_status(dep)["containers"]
+
+    assert spec["image"] == "busybox:1.36"
+    assert spec["args"] == ["--vm-bytes", "150M"]
+    assert spec["limits"] == {"memory": "64Mi"}
+    assert spec["env_names"] == ["DB_HOST", "TOKEN"]
+    assert "s3cr3t" not in str(spec) and "db.internal" not in str(spec)

@@ -155,7 +155,37 @@ def deployment_status(dep: V1Deployment) -> dict[str, Any]:
         "available": status.available_replicas or 0,
         "updated": status.updated_replicas or 0,
         "problem_conditions": problems,
+        "containers": container_specs(dep),
     }
+
+
+def container_specs(dep: V1Deployment) -> list[dict[str, Any]]:
+    """What each container is told to run: image, command, args, resources, env var names.
+
+    Env var values are left out on purpose; they often hold credentials. The names are
+    enough to spot a missing variable.
+    """
+    template = dep.spec.template if dep.spec else None
+    containers = template.spec.containers if template and template.spec else []
+    specs = []
+    for c in containers:
+        resources = c.resources
+        specs.append(
+            {
+                "name": c.name,
+                "image": c.image,
+                "command": _clip(c.command),
+                "args": _clip(c.args),
+                "requests": dict(resources.requests or {}) if resources else {},
+                "limits": dict(resources.limits or {}) if resources else {},
+                "env_names": [e.name for e in c.env or []],
+            }
+        )
+    return specs
+
+
+def _clip(items: list[str] | None, max_items: int = 20, max_chars: int = 200) -> list[str]:
+    return [item[:max_chars] for item in (items or [])[:max_items]]
 
 
 async def resource_usage(
