@@ -70,5 +70,5 @@ undeploy: ## Remove the chart from the demo cluster
 port-forward-mcp: ## Expose the in-cluster MCP server on localhost:8000
 	kubectl -n $(RELEASE_NS) port-forward svc/$(RELEASE) 8000:8000
 
-demo-gif: ## Re-record docs/demo.gif (needs the demo cluster, port-forward and vhs)
+demo-gif: ## Re-record the demo (needs the demo cluster, port-forward and vhs); see docs/demo.tape
 	vhs docs/demo.tape

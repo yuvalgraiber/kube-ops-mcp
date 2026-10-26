@@ -15,3 +15,6 @@ build/
 # Test artifacts
 .coverage
 htmlcov/
+
+# Raw demo recording (docs/demo.gif is the edited version)
+docs/demo-raw.mp4

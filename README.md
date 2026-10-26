@@ -7,7 +7,7 @@
 
 An MCP server that lets Claude Code (or any MCP client) investigate a broken Kubernetes workload the way an on-call engineer would: pod status, events, crash logs and Prometheus metrics, then a root cause with the evidence behind it. It is read-only unless you explicitly turn writes on.
 
-![Claude Code triaging a crash-looping deployment with kube-ops-mcp](docs/demo.gif)
+![Claude Code triaging two broken deployments with kube-ops-mcp: a missing environment variable and an OOMKilled container](docs/demo.gif)
 
 - [Why](#why)
 - [Requirements](#requirements)
